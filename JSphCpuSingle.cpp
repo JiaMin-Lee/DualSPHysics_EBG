@@ -110,9 +110,10 @@ void JSphCpuSingle::ConfigDomain(){
   AllocCpuMemoryFixed();
   //-Allocates memory in CPU for particles. | Reserva memoria en Cpu para particulas.
   AllocCpuMemoryParticles(Np,0);
-
+  
   //-Copies particle data.
   ReserveBasicArraysCpu();
+  
   memcpy(Posc,PartsLoaded->GetPos(),sizeof(tdouble3)*Np);
   memcpy(Idpc,PartsLoaded->GetIdp(),sizeof(unsigned)*Np);
   memcpy(Velrhopc,PartsLoaded->GetVelRhop(),sizeof(tfloat4)*Np);
@@ -136,7 +137,33 @@ void JSphCpuSingle::ConfigDomain(){
   boundnormal=BoundNormalc;
   RunInitialize(Np,Npb,Posc,Idpc,Codec,Velrhopc,boundnormal);
   if(UseNormals)ConfigBoundNormals(Np,Npb,Posc,Idpc,BoundNormalc);
-
+  
+  // ======================================================================
+  // Variables for EBG
+  // ======================================================================
+  if(UseEBG){
+    for(unsigned c = 0; c<MkInfo->Size();c++){
+      const JSphMkBlock* block = MkInfo->Mkblock(c);
+      //Log->Print(fun::VarStr("c",c));
+      //Log->Print(fun::VarStr("Mk",block->Mk));
+      if(block->Mk==(MkEBGBound+MkInfo->GetMkFluidFirst())){
+        unsigned EBGNpBegin=block->Begin;
+        unsigned EBGNpCount=block->Count;
+        //Log->Print(fun::VarStr("MkEBG",block->Mk));
+        //Log->Print(fun::VarStr("begin",block->Begin));
+        //Log->Print(fun::VarStr("count",block->Count));
+        ConfigNeighbourList(Np,EBGNpBegin,EBGNpCount,Posc,Idpc,EBGneighc,EBGrrtheta0c);
+        /*for(unsigned p=0;p<Np;p++){
+          Log->Printf("p = %d, Idp = %d",p, Idpc[p]); 
+          Log->Printf("pos.x = %f, pos.y = %f, pos.z = %f", Posc[p].x, Posc[p].y, Posc[p].z);
+          Log->Printf("Idp = %f, IdpN1 = %f, IdpN2 = %f", EBGneighc[Idpc[p]].x, EBGneighc[Idpc[p]].y, EBGneighc[Idpc[p]].z);
+          Log->Printf("BA = %f, CA = %f, theta = %f", EBGrrtheta0c[Idpc[p]].x, EBGrrtheta0c[Idpc[p]].y, EBGrrtheta0c[Idpc[p]].z);
+        }*/
+      }
+    }
+  }
+  // ======================================================================
+  
   //-Creates PartsInit object with initial particle data for automatic configurations.
   CreatePartsInit(Np,Posc,Codec);
 
@@ -151,10 +178,10 @@ void JSphCpuSingle::ConfigDomain(){
   //-Computes inital cell of the particles and checks if there are unexpected excluded particles.
   //-Calcula celda inicial de particulas y comprueba si hay excluidas inesperadas.
   LoadDcellParticles(Np,Codec,Posc,Dcellc);
-
+  
   //-Creates object for Celldiv on the CPU and selects a valid cellmode.
   //-Crea objeto para divide en CPU y selecciona un cellmode valido.
-  CellDivSingle=new JCellDivCpuSingle(Stable,FtCount!=0,PeriActive,CellDomFixed,CellMode
+  CellDivSingle=new JCellDivCpuSingle(Stable,FtCount!=0,PeriActive,CellMode
     ,Scell,Map_PosMin,Map_PosMax,Map_Cells,CaseNbound,CaseNfixed,CaseNpb,DirOut);
   CellDivSingle->DefineDomain(DomCellCode,DomCelIni,DomCelFin,DomPosMin,DomPosMax);
   ConfigCellDiv((JCellDivCpu*)CellDivSingle);
@@ -165,6 +192,12 @@ void JSphCpuSingle::ConfigDomain(){
   //-Reordena particulas por celda.
   BoundChanged=true;
   RunCellDivide(true);
+  /*for(unsigned p=0;p<Np;p++){
+    Log->Printf("p = %d, Idp = %d",p, Idpc[p]); 
+    Log->Printf("pos.x = %f, pos.y = %f, pos.z = %f", Posc[p].x, Posc[p].y, Posc[p].z);
+    Log->Printf("Idp = %f, IdpN1 = %f, IdpN2 = %f", EBGneighc[Idpc[p]].x, EBGneighc[Idpc[p]].y, EBGneighc[Idpc[p]].z);
+    Log->Printf("BA = %f, CA = %f, theta = %f", EBGrrtheta0c[Idpc[p]].x, EBGrrtheta0c[Idpc[p]].y, EBGrrtheta0c[Idpc[p]].z);
+  }*/
 }
 
 //==============================================================================
@@ -448,13 +481,20 @@ void JSphCpuSingle::RunCellDivide(bool updateperiodic){
   CellDivSingle->SortArray(Dcellc);
   CellDivSingle->SortArray(Posc);
   CellDivSingle->SortArray(Velrhopc);
+  /*if(UseEBG){
+    CellDivSingle->SortArray(EBGneighc);     //-EBG neighbour list
+    CellDivSingle->SortArray(EBGrrthetac);   //-EBG neighbour distances and angle
+    CellDivSingle->SortArray(EBGrrtheta0c);  //-EBG initial neighbour distances and angle
+  }*/
   if(TStep==STEP_Verlet){
     CellDivSingle->SortArray(VelrhopM1c);
+    /*if(UseEBG)CellDivSingle->SortArray(EBGrrthetaM1c);  //-EBG neighbour distances and angle for Verlet*/
   }
   else if(TStep==STEP_Symplectic && (PosPrec || VelrhopPrec)){//-In reality, this is only necessary in divide for corrector, not in predictor??? | En realidad solo es necesario en el divide del corrector, no en el predictor???
     if(!PosPrec || !VelrhopPrec)Run_Exceptioon("Symplectic data is invalid.") ;
     CellDivSingle->SortArray(PosPrec);
     CellDivSingle->SortArray(VelrhopPrec);
+    /*if(UseEBG)CellDivSingle->SortArray(EBGrrthetaPrec);  //-EBG neighbour distances and angle for Sympletic*/
   }
   if(TVisco==VISCO_LaminarSPS)CellDivSingle->SortArray(SpsTauc);
   if(UseNormals){
@@ -469,7 +509,6 @@ void JSphCpuSingle::RunCellDivide(bool updateperiodic){
 
   //-Manages excluded particles fixed, moving and floating before aborting the execution.
   if(CellDivSingle->GetNpbOut())AbortBoundOut();
-
   //-Collect position of floating particles. | Recupera posiciones de floatings.
   if(CaseNfloat)CalcRidp(PeriActive!=0,Np-Npb,Npb,CaseNpb,CaseNpb+CaseNfloat,Codec,Idpc,FtRidp);
   TmcStop(Timers,TMC_NlSortData);
@@ -508,6 +547,7 @@ void JSphCpuSingle::AbortBoundOut(){
   tfloat3* vel=ArraysCpu->ReserveFloat3();
   float* rhop=ArraysCpu->ReserveFloat();
   typecode* code=ArraysCpu->ReserveTypeCode();
+  
   GetParticlesData(nboundout,Np,false,idp,pos,vel,rhop,code);
   //-Shows excluded particles information and aborts execution.
   JSph::AbortBoundOut(Log,nboundout,idp,pos,vel,rhop,code);

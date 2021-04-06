@@ -348,6 +348,31 @@ inline double sec(double z){ return(1.0 / cos(z)); }
 //==============================================================================
 inline double csc(double z){ return(1.0 / sin(z)); }
 
+
+//==============================================================================
+/// Returns angle between 2 adjacent line
+//==============================================================================
+inline tfloat3 AngleBetween2Lines(const tdouble3 aa,const tdouble3 bb,const tdouble3 cc){
+  const tdouble3 distba=bb-aa; //Direction Ratio of line BA 
+  const tdouble3 distca=cc-aa; //Direction Ratio of line CA
+  
+  // Find the dotProduct between 2 lines
+  float dotProduct=distba.x*distca.x+distba.y*distca.y+distba.z*distca.z;
+  // Find Magnitude of both lines
+  float magnitudeBA=distba.x*distba.x+distba.y*distba.y+distba.z*distba.z;
+  float magnitudeCA=distca.x*distca.x+distca.y*distca.y+distca.z*distca.z;
+  
+  // Find the cosine of the angle formed by line AB and BC
+  float theta = dotProduct;
+  theta /= sqrt(magnitudeBA * magnitudeCA);
+  
+  // Find angle in radian
+  theta = acos(theta);
+  
+  return(TFloat3(sqrt(magnitudeBA), sqrt(magnitudeCA), theta));
+    
+}
+
 }
 
 #endif

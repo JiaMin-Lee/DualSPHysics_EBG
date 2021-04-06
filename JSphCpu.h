@@ -122,7 +122,7 @@ protected:
   unsigned *Dcellc;  ///<Cells inside DomCells coded with DomCellCode. | Celda dentro de DomCells codificada con DomCellCode.
   tdouble3 *Posc;
   tfloat4 *Velrhopc;
-
+  
   tfloat3 *BoundNormalc;  ///<Normal (x,y,z) pointing from boundary particles to ghost nodes.
   tfloat3 *MotionVelc;    ///<Velocity of a moving boundary particle.
     
@@ -133,6 +133,16 @@ protected:
   tdouble3 *PosPrec;    ///<Sympletic: in order to keep previous values. | Sympletic: para guardar valores en predictor.
   tfloat4 *VelrhopPrec;
 
+  // ======================================================================
+  // Variables for EBG
+  // ======================================================================
+  tfloat3 *EBGneighc;      ///<EBG neighbour list
+  tfloat3 *EBGrrthetac;  ///<EBG RR and theta between neighbours
+  tfloat3 *EBGrrtheta0c;  ///<EBG Initial RR and theta between neighbours | DOES NOT CHANGE
+  tfloat3 *EBGrrthetaM1c;  ///<Verlet: To keep previous values | EBG RR and theta between neighbours
+  tfloat3 *EBGrrthetaPrec;  ///<Sympletic: To keep previous values | EBG RR and theta between neighbours
+  // ======================================================================
+  
   //-Variables for floating bodies.
   unsigned *FtRidp;             ///<Identifier to access to the particles of the floating object [CaseNfloat].
   StFtoForces *FtoForces;       ///<Stores forces of floatings [FtCount].

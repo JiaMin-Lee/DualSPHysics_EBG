@@ -97,6 +97,17 @@ void JSphCpu::InitVars(){
   FtRidp=NULL;
   FtoForces=NULL;
   FtoForcesRes=NULL;
+  
+  // ======================================================================
+  // Initialization of Element Bending Group (EBG) computation vars
+  // ======================================================================
+  EBGneighc=NULL;
+  EBGrrthetac=NULL;
+  EBGrrtheta0c=NULL;
+  EBGrrthetaM1c=NULL;  //-Verlet
+  EBGrrthetaPrec=NULL; //-Symplectic
+  // ======================================================================
+  
   FreeCpuMemoryParticles();
   FreeCpuMemoryFixed();
 }
@@ -168,10 +179,12 @@ void JSphCpu::AllocCpuMemoryParticles(unsigned np,float over){
   ArraysCpu->AddArrayCount(JArraysCpu::SIZE_24B,2); //-pos
   if(TStep==STEP_Verlet){
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_16B,1); //-velrhopm1
+    if(UseEBG)ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGrrthetam1
   }
   else if(TStep==STEP_Symplectic){
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_24B,1); //-pospre
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_16B,1); //-velrhoppre
+    if(UseEBG)ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGrrthetapre
   }
   if(TVisco==VISCO_LaminarSPS){     
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_24B,1); //-SpsTau,SpsGradvel
@@ -182,6 +195,11 @@ void JSphCpu::AllocCpuMemoryParticles(unsigned np,float over){
   if(UseNormals){
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-BoundNormal
     if(SlipMode!=SLIP_Vel0)ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-MotionVel
+  }
+  if(UseEBG){
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGneigh,EBGrrtheta,EBGrrtheta0
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGrrtheta
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGrrtheta0
   }
   if(InOut){
     //ArraysCpu->AddArrayCount(JArraysCpu::SIZE_4B,1);  //-InOutPart
@@ -209,6 +227,17 @@ void JSphCpu::ResizeCpuMemoryParticles(unsigned npnew){
   tsymatrix3f *spstau     =SaveArrayCpu(Np,SpsTauc);
   tfloat3     *boundnormal=SaveArrayCpu(Np,BoundNormalc);
   tfloat3     *motionvel  =SaveArrayCpu(Np,MotionVelc);
+    //==================================================
+    //For EBG Particles
+  //if(UseEBG){
+    tfloat3     *ebgneigh     =SaveArrayCpu(Np,EBGneighc);
+    tfloat3     *ebgrrtheta   =SaveArrayCpu(Np,EBGrrthetac);
+    tfloat3     *ebgrrtheta0  =SaveArrayCpu(Np,EBGrrtheta0c);
+    tfloat3     *ebgrrthetam1 =SaveArrayCpu(Np,EBGrrthetaM1c);
+    tfloat3     *ebgrrthetapre=SaveArrayCpu(Np,EBGrrthetaPrec);
+  //}
+    //==================================================
+  
   //-Frees pointers.
   ArraysCpu->Free(Idpc);
   ArraysCpu->Free(Codec);
@@ -221,6 +250,17 @@ void JSphCpu::ResizeCpuMemoryParticles(unsigned npnew){
   ArraysCpu->Free(SpsTauc);
   ArraysCpu->Free(BoundNormalc);
   ArraysCpu->Free(MotionVelc);
+    //==================================================
+    //For EBG Particles
+    //==================================================
+  //if(UseEBG){
+    ArraysCpu->Free(EBGneighc);
+    ArraysCpu->Free(EBGrrthetac);
+    ArraysCpu->Free(EBGrrtheta0c);
+    ArraysCpu->Free(EBGrrthetaM1c);
+    ArraysCpu->Free(EBGrrthetaPrec);
+  //}
+    //==================================================
   //-Resizes CPU memory allocation.
   const double mbparticle=(double(MemCpuParticles)/(1024*1024))/CpuParticlesSize; //-MB por particula.
   Log->Printf("**JSphCpu: Requesting cpu memory for %u particles: %.1f MB.",npnew,mbparticle*npnew);
@@ -231,6 +271,16 @@ void JSphCpu::ResizeCpuMemoryParticles(unsigned npnew){
   Dcellc  =ArraysCpu->ReserveUint();
   Posc    =ArraysCpu->ReserveDouble3();
   Velrhopc=ArraysCpu->ReserveFloat4();
+    //==================================================
+    //For EBG Particles
+    //==================================================
+  //if(UseEBG){
+    EBGneighc     =ArraysCpu->ReserveFloat3();
+    EBGrrthetac   =ArraysCpu->ReserveFloat3();
+    EBGrrtheta0c  =ArraysCpu->ReserveFloat3();
+    if(ebgrrthetam1)EBGrrthetaM1c=ArraysCpu->ReserveFloat3();
+    if(ebgrrthetapre)EBGrrthetaPrec=ArraysCpu->ReserveFloat3();
+  //}
   if(velrhopm1)  VelrhopM1c  =ArraysCpu->ReserveFloat4();
   if(pospre)     PosPrec     =ArraysCpu->ReserveDouble3();
   if(velrhoppre) VelrhopPrec =ArraysCpu->ReserveFloat4();
@@ -249,6 +299,16 @@ void JSphCpu::ResizeCpuMemoryParticles(unsigned npnew){
   RestoreArrayCpu(Np,spstau,SpsTauc);
   RestoreArrayCpu(Np,boundnormal,BoundNormalc);
   RestoreArrayCpu(Np,motionvel,MotionVelc);
+  //==================================================
+    //For EBG Particles
+    //==================================================
+  //if(UseEBG){
+    RestoreArrayCpu(Np,ebgneigh,EBGneighc);
+    RestoreArrayCpu(Np,ebgrrtheta,EBGrrthetac);
+    RestoreArrayCpu(Np,ebgrrtheta0,EBGrrtheta0c);
+    RestoreArrayCpu(Np,ebgrrthetam1,EBGrrthetaM1c);
+    RestoreArrayCpu(Np,ebgrrthetapre,EBGrrthetaPrec);
+  //}
   //-Updates values.
   CpuParticlesSize=npnew;
   MemCpuParticles=ArraysCpu->GetAllocMemoryCpu();
@@ -294,6 +354,12 @@ void JSphCpu::ReserveBasicArraysCpu(){
   if(UseNormals){
     BoundNormalc=ArraysCpu->ReserveFloat3();
     if(SlipMode!=SLIP_Vel0)MotionVelc=ArraysCpu->ReserveFloat3();
+  }
+  if(UseEBG){
+    EBGneighc=ArraysCpu->ReserveFloat3();
+    EBGrrthetac=ArraysCpu->ReserveFloat3();
+    EBGrrtheta0c=ArraysCpu->ReserveFloat3();
+    if(TStep==STEP_Verlet)EBGrrthetaM1c=ArraysCpu->ReserveFloat3();
   }
 }
 
@@ -406,7 +472,7 @@ void JSphCpu::ConfigRunMode(const JSphCfgRun *cfg,std::string preinfo){
   #ifndef WIN32
     const int len=128; char hname[len];
     gethostname(hname,len);
-    preinfo=preinfo+(!preinfo.empty()? " - ": "")+"HostName:"+hname;
+    preinfo=preinfo+(!preinfo.empty()? ", ": "")+"HostName:"+hname;
   #endif
   Hardware="Cpu";
   if(OmpThreads==1)RunMode="Single core";
@@ -425,8 +491,13 @@ void JSphCpu::ConfigRunMode(const JSphCfgRun *cfg,std::string preinfo){
 //==============================================================================
 void JSphCpu::InitRunCpu(){
   InitRun(Np,Idpc,Posc);
-
-  if(TStep==STEP_Verlet)memcpy(VelrhopM1c,Velrhopc,sizeof(tfloat4)*Np);
+  if(TStep==STEP_Verlet){
+    memcpy(VelrhopM1c,Velrhopc,sizeof(tfloat4)*Np);
+  }
+  if(UseEBG){
+    //memcpy(EBGrrthetac,EBGrrtheta0c,sizeof(tfloat3)*Np);
+    if(TStep==STEP_Verlet)memcpy(EBGrrthetaM1c,EBGrrthetac,sizeof(tfloat3)*Np);
+  }
   if(TVisco==VISCO_LaminarSPS)memset(SpsTauc,0,sizeof(tsymatrix3f)*Np);
   if(CaseNfloat)InitFloating();
   if(MotionVelc)memset(MotionVelc,0,sizeof(tfloat3)*Np);
@@ -1031,7 +1102,7 @@ template<TpKernel tker,bool sim2d,TpSlipMode tslip> void JSphCpu::InteractionMdb
 {
   if(tslip==SLIP_FreeSlip)Run_Exceptioon("SlipMode=\'Free slip\' is not yet implemented...");
   const int nn=int(n);
-  #ifdef OMP_USE
+  #ifdef _WITHOMP
     #pragma omp parallel for schedule (guided)
   #endif
   for(int p1=0;p1<nn;p1++)if(boundnormal[p1]!=TFloat3(0)){
@@ -1059,7 +1130,7 @@ template<TpKernel tker,bool sim2d,TpSlipMode tslip> void JSphCpu::InteractionMdb
         const float dry=float(gposp1.y-pos[p2].y);
         const float drz=float(gposp1.z-pos[p2].z);
         const float rr2=(drx*drx + dry*dry + drz*drz);
-        if(rr2<=KernelSize2 && CODE_IsFluid(code[p2])){//-Only with fluid particles (including inout).
+        if(rr2<=KernelSize2 && rr2>=ALMOSTZERO && CODE_IsFluid(code[p2])){//-Only with fluid particles (including inout).
           //-Wendland kernel.
           float fac;
           const float wab=fsph::GetKernel_WabFac<tker>(CSP,rr2,fac);
