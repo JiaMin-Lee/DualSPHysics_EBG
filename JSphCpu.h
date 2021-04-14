@@ -68,7 +68,6 @@ inline stinterparmsc StInterparmsc(unsigned np,unsigned npb,unsigned npbok
   return(d);
 }
 
-
 ///Structure to collect interaction results.
 typedef struct{
   float viscdt;
@@ -122,7 +121,7 @@ protected:
   unsigned *Dcellc;  ///<Cells inside DomCells coded with DomCellCode. | Celda dentro de DomCells codificada con DomCellCode.
   tdouble3 *Posc;
   tfloat4 *Velrhopc;
-
+  
   tfloat3 *BoundNormalc;  ///<Normal (x,y,z) pointing from boundary particles to ghost nodes.
   tfloat3 *MotionVelc;    ///<Velocity of a moving boundary particle.
     
@@ -133,6 +132,23 @@ protected:
   tdouble3 *PosPrec;    ///<Sympletic: in order to keep previous values. | Sympletic: para guardar valores en predictor.
   tfloat4 *VelrhopPrec;
 
+  // ======================================================================
+  // Variables for EBG
+  // ======================================================================
+  tfloat3 *EBGneighc;     ///<EBG neighbour list
+  tfloat3 *EBGrrthetac;   ///<EBG RR and theta between neighbours
+  tfloat3 *EBGrrtheta0c;  ///<EBG Initial RR and theta between neighbours | DOES NOT CHANGE
+  tfloat3 *EBGtensionc;   ///<EBG-Tension between neighbour particles
+  tfloat4 *EBGforcesc;    ///<EBG-Moment forces between neighbour particles
+  
+  tfloat3 *EBGrrthetaM1c;    ///<Verlet: To keep previous values | EBG RR and theta between neighbours
+  tfloat3 *EBGrrthetaPrec;   ///<Symplectic: To keep previous values | EBG RR and theta between neighbours
+  tfloat3 *EBGtensionM1c;    ///<Verlet: To keep previous values | EBG-Tension between neighbour particles
+  tfloat3 *EBGtensionPrec;  ///<Symplectic: To keep previous values | EBG-Tension between neighbour particles
+  tfloat4 *EBGforcesM1c;     ///<Verlet: To keep previous values | EBG-Moment forces between neighbour particles
+  tfloat4 *EBGforcesPrec;    ///<Symplectic: To keep previous values | EBG-Moment forces between neighbour particles
+  // ======================================================================
+  
   //-Variables for floating bodies.
   unsigned *FtRidp;             ///<Identifier to access to the particles of the floating object [CaseNfloat].
   StFtoForces *FtoForces;       ///<Stores forces of floatings [FtCount].
@@ -197,6 +213,7 @@ protected:
 
   unsigned GetParticlesData(unsigned n,unsigned pini,bool onlynormal
     ,unsigned *idp,tdouble3 *pos,tfloat3 *vel,float *rhop,typecode *code);
+  
   void ConfigOmp(const JSphCfgRun *cfg);
 
   void ConfigRunMode(const JSphCfgRun *cfg,std::string preinfo="");
@@ -248,6 +265,18 @@ protected:
   void Interaction_MdbcCorrection(TpSlipMode slipmode,const StDivDataCpu &divdata
     ,const tdouble3 *pos,const typecode *code,const unsigned *idp
     ,const tfloat3 *boundnormal,const tfloat3 *motionvel,tfloat4 *velrhop);
+  
+  //================================================================================
+  //-EBG Interaction
+  //================================================================================  
+  void InteractionForcesEBG(unsigned n,unsigned pinit,StDivDataCpu divdata
+    ,const unsigned *dcell, const tdouble3 *pos
+    ,const typecode *code,const unsigned *idp
+    ,const tfloat4 *velrhop,tfloat3 *ace
+    ,const tfloat3 *ebgneigh,const tfloat3 *ebgrrtheta0
+    ,tfloat3 *ebgrrtheta,tfloat3 *ebgtension,tfloat4 *ebgforces
+    );
+  //================================================================================
 
   void ComputeSpsTau(unsigned n,unsigned pini,const tfloat4 *velrhop,const tsymatrix3f *gradvel,tsymatrix3f *tau)const;
 

@@ -235,7 +235,6 @@ void JSph::InitVars(){
 
   AllocMemoryFloating(0,false);
 
-  CellDomFixed=false;
   CellMode=CELLMODE_None;
   ScellDiv=0;
   Scell=0;
@@ -275,6 +274,26 @@ void JSph::InitVars(){
   MaxNumbers.Clear();
 
   SaveFtAce=false;
+  
+  //==============================================================================
+  // Initialisation of EBG
+  //==============================================================================
+  UseEBG=false;
+  EBGBound=0;
+  DensityEBG=0; 
+  ViscosityEBG=0;
+  YoungsModEBG=0;
+  CrossAreaEBG=0;
+  BendingRigidityEBG=0;
+  MkEBG=0;
+  MkEBGBound=0;
+  MkEBGFluid=0;
+  MkBoundBegin=0;
+  MkBoundCount=0;
+  NpEBG=0;
+  EBGCenter=TDouble3(0);
+  //==============================================================================
+  
 }
 
 //==============================================================================
@@ -835,7 +854,6 @@ void JSph::LoadConfigCommands(const JSphCfgRun *cfg){
   else OutputTime->Config(FileXml,"case.execution.special.timeout",TimePart);
 
   //-Configuration of domain limits.
-  CellDomFixed=cfg->CellDomFixed;
   CellMode=cfg->CellMode;
   if(cfg->DomainMode==2)ConfigDomainFixed(cfg->DomainFixedMin,cfg->DomainFixedMax);
 
@@ -907,8 +925,6 @@ void JSph::LoadConfigVarsExec(){
 void JSph::LoadCaseConfig(const JSphCfgRun *cfg){
   if(!fun::FileExists(FileXml))Run_ExceptioonFile("Case configuration was not found.",FileXml);
   JXml xml; xml.LoadFile(FileXml);
-  //-Shows pre-processing application generating the XML file.
-  Log->Printf("XML-App: %s",xml.GetAttributeStr(xml.GetNodeError("case")->ToElement(),"app",true,"unknown").c_str());
 
   //-Loads kernel selection to compute kernel values.
   LoadKernelSelection(cfg,&xml);
@@ -1119,6 +1135,32 @@ void JSph::LoadCaseConfig(const JSphCfgRun *cfg){
       }
     }
   }
+  
+  //==============================================================================
+  // Configuration of EBG parameters for ONE structure
+  //==============================================================================
+  TiXmlNode* ebgNode = xml.GetNode("case.execution.special.ebg",false);
+  if(ebgNode) {
+    UseEBG=true;
+    MkEBG=xml.ReadElementInt(ebgNode->ToElement(), "fluid","mkfluid");
+    TiXmlNode* ebgBoundNode = xml.GetNode("case.execution.special.ebg.fluid",false);
+    EBGBound=xml.ReadElementInt(ebgBoundNode, "EBGBound", "value");
+    if(EBGBound)MkEBGBound=MkEBG;
+    unsigned BlockEBG=MkEBG+parts.CountBlocks(TpPartFixed)+parts.CountBlocks(TpPartMoving);
+    const JCasePartBlock &EBGblock=parts.GetBlock(BlockEBG);
+    MkBoundBegin=EBGblock.GetBegin();
+    MkBoundCount=EBGblock.GetCount();
+    
+    NpEBG+=MkBoundCount;
+    
+    // Properties
+    EBGCenter=xml.ReadElementDouble3(ebgBoundNode,"center");
+    DensityEBG=xml.ReadElementFloat(ebgBoundNode, "DensityEBG", "value");
+    YoungsModEBG=xml.ReadElementFloat(ebgBoundNode, "YoungsModEBG", "value");
+    CrossAreaEBG=xml.ReadElementFloat(ebgBoundNode, "CrossAreaEBG", "value");
+    BendingRigidityEBG= xml.ReadElementFloat(ebgBoundNode, "BendingRigidityEBG", "value");
+  }
+  //==============================================================================
 
   //-Configuration of Inlet/Outlet.
   if(xml.GetNodeSimple("case.execution.special.inout",true)){
@@ -1320,6 +1362,103 @@ void JSph::ConfigBoundNormals(unsigned np,unsigned npb,const tdouble3 *pos
 }
 
 //==============================================================================
+/// To get EBG neighbour list
+//==============================================================================
+void JSph::ConfigNeighbourList(const unsigned np,const unsigned ebgnpbegin,const unsigned ebgnpcount
+  ,const tdouble3 ebgcenter
+  ,const tdouble3 *pos,const unsigned *idp,tfloat3 *ebgneigh,tfloat3 *ebgrrtheta0)
+{
+  /*Log->Printf("HERE!");
+  Log->Print(fun::VarStr("EBGCenter",ebgcenter));*/
+  //-Find NeigbourList
+  unsigned ebgcount=ebgnpbegin;
+  for(unsigned p=0;p<np;p++)if(idp[p]>=ebgnpbegin && idp[p]<(ebgnpbegin+ebgnpcount)){
+    ebgneigh[ebgcount].x=idp[p];
+    double diffmin=DBL_MAX;
+    double diffminp2=DBL_MAX;
+    for(unsigned p1=0;p1<np;p1++){
+      if(idp[p1]!=ebgneigh[ebgcount].x && (idp[p1]>=ebgnpbegin && idp[p1]<(ebgnpbegin+ebgnpcount))){
+        double diffp1p=pow((pos[p1].x-pos[p].x),2)+pow((pos[p1].y-pos[p].y),2)+pow((pos[p1].z-pos[p].z),2);
+        if(diffp1p<diffmin){
+          diffmin=diffp1p;
+          ebgneigh[ebgcount].y=idp[p1];
+          ebgrrtheta0[ebgcount].x=sqrt(diffp1p);
+        }
+      }
+    }
+    for(unsigned p2=0;p2<np;p2++){
+      if((idp[p2]!=ebgneigh[ebgcount].x && idp[p2]!=ebgneigh[ebgcount].y) && (idp[p2]>=ebgnpbegin && idp[p2]<(ebgnpbegin+ebgnpcount))){
+        double diffp2p=pow((pos[p2].x-pos[p].x),2)+pow((pos[p2].y-pos[p].y),2)+pow((pos[p2].z-pos[p].z),2);
+        if(diffp2p<diffminp2){
+          diffminp2=diffp2p;
+          ebgneigh[ebgcount].z=idp[p2];
+          ebgrrtheta0[ebgcount].y=sqrt(diffp2p);
+        }
+      }
+    }
+    ebgcount++;
+  }
+  
+  for(unsigned c=ebgnpbegin;c<ebgcount;c++){
+    tdouble3 posref; tdouble3 posn1; tdouble3 posn2;
+    unsigned ppref;
+    for(unsigned pref=0;pref<np;pref++)if(idp[pref]==ebgneigh[c].x){
+      posref=pos[pref]-ebgcenter;
+      ppref=pref;
+    }
+    for(unsigned pn1=0;pn1<np;pn1++)if(idp[pn1]==ebgneigh[idp[ppref]].y){
+      posn1=pos[pn1]-ebgcenter;
+    }
+    for(unsigned pn2=0;pn2<np;pn2++)if(idp[pn2]==ebgneigh[idp[ppref]].z){
+      posn2=pos[pn2]-ebgcenter;
+    }
+    if(posref.x>0){
+      /*if(posref.z>=0)if(posn1.z>posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posref.z<0)if(posn1.z>posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}*/
+      if(posn1.z>posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posn1.z==posn2.z && posn1.z>0)if(posn1.x<posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posn1.z==posn2.z && posn1.z<0)if(posn1.x>posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+    }
+    else if(posref.x<0){
+      /*if(posref.z>=0)if(posn1.z<posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posref.z<0)if(posn1.z<posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}*/
+      if(posn1.z<posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posn1.z==posn2.z && posn1.z>0)if(posn1.x<posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posn1.z==posn2.z && posn1.z<0)if(posn1.x>posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+    }
+    else if(posref.x==0){
+      if(posref.z<0)if(posn1.x>posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posref.z>0)if(posn1.x<posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+    }
+  }
+
+  for(unsigned c=ebgnpbegin;c<ebgcount;c++){
+    tdouble3 pospp; tdouble3 posp1; tdouble3 posp2;
+    unsigned ppref1;
+    for(unsigned pp=0;pp<np;pp++)if(idp[pp]==ebgneigh[c].x){
+      pospp=pos[pp];
+      ppref1=pp;
+    }
+    for(unsigned p1=0;p1<np;p1++)if(idp[p1]==ebgneigh[idp[ppref1]].y){
+      posp1=pos[p1];
+    }
+    for(unsigned p2=0;p2<np;p2++)if(idp[p2]==ebgneigh[idp[ppref1]].z){
+      posp2=pos[p2];
+    }
+    
+    ebgrrtheta0[c]=fmath::AngleBetween2Lines(pospp,posp1,posp2);
+  }
+  
+  /*for(unsigned p=ebgnpbegin;p<ebgcount;p++){
+    //Log->Printf("p = %d", p);
+    Log->Printf("%d, %d, %d",(int)ebgneigh[p].x,(int)ebgneigh[p].y,(int)ebgneigh[p].z);
+    //Log->Printf("DistBA = %f, DistCA = %f, theta = %f",ebgrrtheta0[p].x,ebgrrtheta0[p].y,ebgrrtheta0[p].z);    
+  }*/
+  
+}
+  
+
+//==============================================================================
 /// Sets DBL_MAX values by indicated values.
 //==============================================================================
 void JSph::PrepareCfgDomainValues(tdouble3 &v,tdouble3 vdef)const{
@@ -1504,7 +1643,7 @@ void JSph::VisuConfig(){
     //Log->Print(fun::VarStr("DensityDiffusionArray",DDTArray));
     ConfigInfo=ConfigInfo+fun::PrintStr("(%g)",DDTValue);
   }
-  if(TDensity==DDT_DDT2Full && KernelH/Dp>1.5)Log->PrintWarning("It is advised that selected DDT: \'Fourtakas et al 2019 (full)\' is used with several boundary layers of particles when h/dp>1.5 (2h <= layers*Dp)");
+  if(TDensity==DDT_DDT2Full && KernelH/Dp>1.5)Log->PrintWarning("It is advised that selected DDT \'(Fourtakas et al 2019 (full)\' is used with several boundary layers of particles when h/dp>1.5 (2h <= layers*Dp)");
   //-Shifting.
   if(Shifting){
     Shifting->VisuConfig();
@@ -1581,6 +1720,30 @@ void JSph::VisuConfig(){
   Log->Print(fun::VarStr("WrnPartsOut",WrnPartsOut));
   //-Other configurations. 
   if(CteB==0)Run_Exceptioon("Constant \'b\' cannot be zero.\n\'b\' is zero when fluid height is zero (or fluid particles were not created)");
+  
+  //==============================================================================
+  // EBG: Log configuration variables
+  //==============================================================================
+  Log->Print(fun::VarStr("MkBoundFirst", MkInfo->GetMkBoundFirst()));
+  Log->Print(fun::VarStr("MkFluidFirst", MkInfo->GetMkFluidFirst()));
+  Log->Print(fun::VarStr("UseEBG", UseEBG));
+  if(UseEBG) {
+    Log->Printf("\nEBG is in used (only ONE body is allowed).");
+    Log->Printf("EBG Body Particle Information:");
+    Log->Print(fun::VarStr("  MkEBG.............",MkEBG));
+    Log->Print(fun::VarStr("  MkEBGBound........",MkEBGBound));
+    Log->Print(fun::VarStr("  MkBoundBegin......",MkBoundBegin));
+    Log->Print(fun::VarStr("  MkBoundCount......",MkBoundCount));
+    Log->Print(fun::VarStr("  NpEBG.............",NpEBG));
+    Log->Print(fun::VarStr("  EBGCenter.........",EBGCenter));
+    Log->Print(fun::VarStr("  DensityEBG........",DensityEBG));
+    Log->Print(fun::VarStr("  YoungsModEBG......",YoungsModEBG));
+    Log->Print(fun::VarStr("  CrossAreaEBG......",CrossAreaEBG));
+    Log->Print(fun::VarStr("  BendingRigidityEBG",BendingRigidityEBG));
+    Log->Printf("\n");
+  }
+  //==============================================================================
+  
 }
 
 //==============================================================================
@@ -1687,7 +1850,6 @@ void JSph::ConfigCellDivision(){
   Log->Print(fun::VarStr("CellMode",string(GetNameCellMode(CellMode))));
   Log->Print(fun::VarStr("ScellDiv",ScellDiv));
   Log->Print(string("MapCells=(")+fun::Uint3Str(Map_Cells)+")");
-  Log->Print(fun::VarStr("CellDomFixed",CellDomFixed));
   //-Creates VTK file with map cells.
   if(SaveMapCellsVtkSize()<1024*1024*10)SaveMapCellsVtk(Scell);
   else Log->PrintWarning("File CfgInit_MapCells.vtk was not created because number of cells is too high.");
@@ -2149,11 +2311,7 @@ void JSph::InitRun(unsigned np,const unsigned *idp,const tdouble3 *pos){
   if(GaugeSystem->GetCount())GaugeSystem->VisuConfig("GaugeSystem configuration:"," ");
 
   //-Shows configuration of JDsOutputTime.
-  if(OutputTime->UseSpecialConfig()){
-    vector<string> lines;
-    OutputTime->GetConfig("TimeOut configuration:"," ",lines);
-    Log->Print(lines);
-  }
+  if(OutputTime->UseSpecialConfig())OutputTime->VisuConfig("TimeOut configuration:"," ");
 
   Part=PartIni; Nstep=0; PartNstep=0; PartOut=0;
   TimeStep=TimeStepIni; TimeStepM1=TimeStep;
@@ -2189,12 +2347,8 @@ void JSph::CalcMotionWaveGen(double stepdt){
   if(WaveGen){
     const bool svdata=(TimeStep+stepdt>=TimePartNext);
     for(unsigned c=0;c<WaveGen->GetCount();c++){
-      const StMotionData m=(motsim? WaveGen->GetMotion(svdata,c,TimeStep,stepdt): WaveGen->GetMotionAce(svdata,c,TimeStep,stepdt));
-      //Log->Printf("%u> t:%f  tp:%d  mx:%f  SetMotionData-WaveGen",Nstep,TimeStep,m.type,m.linmov.x);
-      if(m.type!=MOTT_None){
-        if(motsim)DsMotion->SetMotionData   (m);
-        else      DsMotion->SetMotionDataAce(m);
-      }
+      if(motsim)DsMotion->SetMotionData   (WaveGen->GetMotion   (svdata,c,TimeStep,stepdt));
+      else      DsMotion->SetMotionDataAce(WaveGen->GetMotionAce(svdata,c,TimeStep,stepdt));
     }
   }
 }

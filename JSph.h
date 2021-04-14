@@ -38,6 +38,7 @@
 #include "JSphCfgRun.h"
 #include "JLog2.h"
 #include "JTimer.h"
+#include "FunctionsMath.h"
 #include <float.h>
 #include <string>
 #include <cmath>
@@ -338,7 +339,6 @@ protected:
   JDsPips *DsPips;          ///<Object for PIPS calculation.
 
   //-Variables for division in cells.
-  bool CellDomFixed;       ///<The Cell domain is fixed according maximum domain size.
   TpCellMode CellMode;     ///<Cell division mode.
   int ScellDiv;            ///<Value to divide KernelSize (1 or 2).
   float Scell;             ///<Cell size: KernelSize/ScellDiv (KernelSize or KernelSize/2).
@@ -410,6 +410,25 @@ protected:
 
   bool SaveFtAce;    ///<Indicates whether linear and angular accelerations of each floating objects are saved.
   void SaveFtAceFun(double dt,bool predictor,StFtoForces *ftoforces);
+  
+  // ======================================================================
+  // Element Bending Group (EBG)
+  // ======================================================================
+  bool UseEBG;               ///< Enable use of EBG
+  unsigned EBGBound;         ///< 1 for structural boundary particles (basically EBG particles) | 0 for fluid structural boundary particles
+  float DensityEBG;          ///< Density of EBG boundary particles
+  float ViscosityEBG;        ///< Viscosity of EBG particles 
+  float YoungsModEBG;        ///< Young's Modulus of EBG particles
+  float CrossAreaEBG;        ///< Cross-sectional area of EBG particles
+  float BendingRigidityEBG;  ///< Bending Rigidity of EBG particles
+  unsigned MkEBG;            ///< Block of the EBG particles
+  unsigned MkEBGBound;       ///< Mk of the EBG boundary particles
+  unsigned MkEBGFluid;       ///< Mk of the EBG fluid particles
+  unsigned MkBoundBegin;     ///< Begin of EBG particle ID
+  unsigned MkBoundCount;     ///< Number of EBG particles
+  unsigned NpEBG;            ///< Number of EBG particles
+  tdouble3 EBGCenter;         ///< EBG Center
+  // ======================================================================
 
 
 protected:
@@ -432,6 +451,15 @@ protected:
   void LoadCodeParticles(unsigned np,const unsigned *idp,typecode *code)const;
   void LoadBoundNormals(unsigned np,unsigned npb,const unsigned *idp,const typecode *code,tfloat3 *boundnormal);
   void ConfigBoundNormals(unsigned np,unsigned npb,const tdouble3 *pos,const unsigned *idp,tfloat3 *boundnormal);
+  
+  // ======================================================================
+  // To calculate EBG neighbour list and Initial EBG RR and theta
+  // ======================================================================
+  void ConfigNeighbourList(const unsigned np,const unsigned ebgnpbegin,const unsigned ebgnpcount
+    ,const tdouble3 ebgcenter
+    ,const tdouble3 *pos,const unsigned *idp
+    ,tfloat3 *ebgneigh,tfloat3 *ebgrrtheta0);
+  // ======================================================================
 
   void PrepareCfgDomainValues(tdouble3 &v,tdouble3 vdef=TDouble3(0))const;
   void ResizeMapLimits();
