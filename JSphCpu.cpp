@@ -97,6 +97,29 @@ void JSphCpu::InitVars(){
   FtRidp=NULL;
   FtoForces=NULL;
   FtoForcesRes=NULL;
+  
+  // ======================================================================
+  // Initialization of Element Bending Group (EBG) computation vars
+  // ======================================================================
+  Area0EBG=0;
+  AreaEBG=0;
+
+  EBGneighc=NULL;
+  EBGposc=NULL;
+  EBGrrthetac=NULL;
+  EBGrrtheta0c=NULL;
+  EBGtensionc=NULL;
+  EBGincompc=NULL;
+  EBGforcesc=NULL;
+  
+  EBGrrthetaM1c=NULL;  //-Verlet
+  EBGrrthetaPrec=NULL; //-Symplectic
+  EBGtensionM1c=NULL;
+  EBGtensionPrec=NULL;
+  EBGforcesM1c=NULL;
+  EBGforcesPrec=NULL;
+  // ======================================================================
+  
   FreeCpuMemoryParticles();
   FreeCpuMemoryFixed();
 }
@@ -168,10 +191,20 @@ void JSphCpu::AllocCpuMemoryParticles(unsigned np,float over){
   ArraysCpu->AddArrayCount(JArraysCpu::SIZE_24B,2); //-pos
   if(TStep==STEP_Verlet){
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_16B,1); //-velrhopm1
+    if(UseEBG){
+      ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGrrthetam1
+      ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGtensionm1
+      ArraysCpu->AddArrayCount(JArraysCpu::SIZE_16B,1); //-EBGforcesm1
+    }
   }
   else if(TStep==STEP_Symplectic){
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_24B,1); //-pospre
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_16B,1); //-velrhoppre
+    if(UseEBG){
+      ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGrrthetapre
+      ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGtensionpre
+      ArraysCpu->AddArrayCount(JArraysCpu::SIZE_16B,1); //-EBGforcespre
+    }
   }
   if(TVisco==VISCO_LaminarSPS){     
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_24B,1); //-SpsTau,SpsGradvel
@@ -182,6 +215,18 @@ void JSphCpu::AllocCpuMemoryParticles(unsigned np,float over){
   if(UseNormals){
     ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-BoundNormal
     if(SlipMode!=SLIP_Vel0)ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-MotionVel
+  }
+  if(UseEBG){
+    /*ArraysCpu->AddArrayCount(JArraysCpu::SIZE_8B,1); //-Area0EBG
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_8B,1); //-AreaEBG*/
+
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGneigh
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_24B,2); //-EBGposc
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGrrtheta
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGrrtheta0
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,1); //-EBGtension
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_12B,2); //-EBGincomp
+    ArraysCpu->AddArrayCount(JArraysCpu::SIZE_16B,1); //-EBGforces
   }
   if(InOut){
     //ArraysCpu->AddArrayCount(JArraysCpu::SIZE_4B,1);  //-InOutPart
@@ -209,6 +254,26 @@ void JSphCpu::ResizeCpuMemoryParticles(unsigned npnew){
   tsymatrix3f *spstau     =SaveArrayCpu(Np,SpsTauc);
   tfloat3     *boundnormal=SaveArrayCpu(Np,BoundNormalc);
   tfloat3     *motionvel  =SaveArrayCpu(Np,MotionVelc);
+    //==================================================
+    //For EBG Particles
+  //if(UseEBG){
+    tfloat3     *ebgneigh     =SaveArrayCpu(Np,EBGneighc);
+    tdouble3    *ebgpos       =SaveArrayCpu(MkBoundCount,EBGposc);
+    tfloat3     *ebgrrtheta0  =SaveArrayCpu(Np,EBGrrtheta0c);
+    tfloat3     *ebgrrtheta   =SaveArrayCpu(Np,EBGrrthetac);
+    tfloat3     *ebgtension   =SaveArrayCpu(Np,EBGtensionc);
+    tfloat3     *ebgincomp    =SaveArrayCpu(Np,EBGincompc);
+    tfloat4     *ebgforces    =SaveArrayCpu(Np,EBGforcesc);
+    
+    //tfloat3     *ebgrrthetam1 =SaveArrayCpu(Np,EBGrrthetaM1c);
+    //tfloat3     *ebgrrthetapre=SaveArrayCpu(Np,EBGrrthetaPrec);
+    //tfloat3     *ebgtensionm1 =SaveArrayCpu(Np,EBGtensionM1c);
+    //tfloat3     *ebgtensionpre=SaveArrayCpu(Np,EBGtensionPrec);
+    //tfloat4     *ebgforcesm1  =SaveArrayCpu(Np,EBGforcesM1c);
+    //tfloat4     *ebgforcespre =SaveArrayCpu(Np,EBGforcesPrec);
+  //}
+    //==================================================
+  
   //-Frees pointers.
   ArraysCpu->Free(Idpc);
   ArraysCpu->Free(Codec);
@@ -221,6 +286,26 @@ void JSphCpu::ResizeCpuMemoryParticles(unsigned npnew){
   ArraysCpu->Free(SpsTauc);
   ArraysCpu->Free(BoundNormalc);
   ArraysCpu->Free(MotionVelc);
+    //==================================================
+    //For EBG Particles
+    //==================================================
+  //if(UseEBG){
+    ArraysCpu->Free(EBGneighc);
+    ArraysCpu->Free(EBGposc);
+    ArraysCpu->Free(EBGrrtheta0c);
+    ArraysCpu->Free(EBGrrthetac);
+    ArraysCpu->Free(EBGtensionc);
+    ArraysCpu->Free(EBGincompc);
+    ArraysCpu->Free(EBGforcesc);
+    
+    //ArraysCpu->Free(EBGrrthetaM1c);
+    //ArraysCpu->Free(EBGrrthetaPrec);
+    //ArraysCpu->Free(EBGtensionM1c);
+    //ArraysCpu->Free(EBGtensionPrec);
+    //ArraysCpu->Free(EBGforcesM1c);
+    //ArraysCpu->Free(EBGforcesPrec);  
+  //}
+    //==================================================
   //-Resizes CPU memory allocation.
   const double mbparticle=(double(MemCpuParticles)/(1024*1024))/CpuParticlesSize; //-MB por particula.
   Log->Printf("**JSphCpu: Requesting cpu memory for %u particles: %.1f MB.",npnew,mbparticle*npnew);
@@ -231,6 +316,24 @@ void JSphCpu::ResizeCpuMemoryParticles(unsigned npnew){
   Dcellc  =ArraysCpu->ReserveUint();
   Posc    =ArraysCpu->ReserveDouble3();
   Velrhopc=ArraysCpu->ReserveFloat4();
+    //==================================================
+    //For EBG Particles
+    //==================================================
+  //if(UseEBG){
+    EBGneighc     =ArraysCpu->ReserveFloat3();
+    EBGposc       =ArraysCpu->ReserveDouble3();
+    EBGrrtheta0c  =ArraysCpu->ReserveFloat3();
+    EBGrrthetac   =ArraysCpu->ReserveFloat3();
+    EBGtensionc   =ArraysCpu->ReserveFloat3();
+    EBGincompc    =ArraysCpu->ReserveFloat3();
+    EBGforcesc    =ArraysCpu->ReserveFloat4();
+    //if(ebgrrthetam1)EBGrrthetaM1c=ArraysCpu->ReserveFloat3();
+    //if(ebgrrthetapre)EBGrrthetaPrec=ArraysCpu->ReserveFloat3();
+    //if(ebgtensionm1)EBGtensionM1c=ArraysCpu->ReserveFloat3();
+    //if(ebgtensionpre)EBGtensionPrec=ArraysCpu->ReserveFloat3();
+    //if(ebgforcesm1)EBGforcesM1c=ArraysCpu->ReserveFloat4();
+    //if(ebgforcespre)EBGforcesPrec=ArraysCpu->ReserveFloat4();
+  //}
   if(velrhopm1)  VelrhopM1c  =ArraysCpu->ReserveFloat4();
   if(pospre)     PosPrec     =ArraysCpu->ReserveDouble3();
   if(velrhoppre) VelrhopPrec =ArraysCpu->ReserveFloat4();
@@ -249,6 +352,25 @@ void JSphCpu::ResizeCpuMemoryParticles(unsigned npnew){
   RestoreArrayCpu(Np,spstau,SpsTauc);
   RestoreArrayCpu(Np,boundnormal,BoundNormalc);
   RestoreArrayCpu(Np,motionvel,MotionVelc);
+  //==================================================
+  //For EBG Particles
+  //==================================================
+  //if(UseEBG){
+    RestoreArrayCpu(Np,ebgneigh,EBGneighc);
+    RestoreArrayCpu(MkBoundCount,ebgpos,EBGposc);
+    RestoreArrayCpu(Np,ebgrrtheta0,EBGrrtheta0c);
+    RestoreArrayCpu(Np,ebgrrtheta,EBGrrthetac);   
+    RestoreArrayCpu(Np,ebgtension,EBGtensionc);
+    RestoreArrayCpu(Np,ebgincomp,EBGincompc);
+    RestoreArrayCpu(Np,ebgforces,EBGforcesc);
+    
+    //RestoreArrayCpu(Np,ebgrrthetam1,EBGrrthetaM1c);
+    //RestoreArrayCpu(Np,ebgrrthetapre,EBGrrthetaPrec);
+    //RestoreArrayCpu(Np,ebgtensionm1,EBGtensionM1c);
+    //RestoreArrayCpu(Np,ebgtensionpre,EBGtensionPrec);
+    //RestoreArrayCpu(Np,ebgforcesm1,EBGforcesM1c);
+    //RestoreArrayCpu(Np,ebgforcespre,EBGforcesPrec);
+  //}
   //-Updates values.
   CpuParticlesSize=npnew;
   MemCpuParticles=ArraysCpu->GetAllocMemoryCpu();
@@ -294,6 +416,22 @@ void JSphCpu::ReserveBasicArraysCpu(){
   if(UseNormals){
     BoundNormalc=ArraysCpu->ReserveFloat3();
     if(SlipMode!=SLIP_Vel0)MotionVelc=ArraysCpu->ReserveFloat3();
+  }
+  if(UseEBG){
+    /*Area0EBG=ArraysCpu->ReserveDouble();
+    AreaEBG=ArraysCpu->ReserveDouble();*/
+
+    EBGneighc=ArraysCpu->ReserveFloat3();
+    EBGposc=ArraysCpu->ReserveDouble3();
+    EBGrrtheta0c=ArraysCpu->ReserveFloat3();
+    /*EBGrrthetac=ArraysCpu->ReserveFloat3();
+    EBGtensionc=ArraysCpu->ReserveFloat3();
+    EBGforcesc=ArraysCpu->ReserveFloat4();*/
+    /*if(TStep==STEP_Verlet){
+      EBGrrthetaM1c=ArraysCpu->ReserveFloat3();
+      EBGtensionM1c=ArraysCpu->ReserveFloat3();
+      EBGforcesM1c=ArraysCpu->ReserveFloat4();
+    }*/
   }
 }
 
@@ -406,7 +544,7 @@ void JSphCpu::ConfigRunMode(const JSphCfgRun *cfg,std::string preinfo){
   #ifndef WIN32
     const int len=128; char hname[len];
     gethostname(hname,len);
-    preinfo=preinfo+(!preinfo.empty()? " - ": "")+"HostName:"+hname;
+    preinfo=preinfo+(!preinfo.empty()? ", ": "")+"HostName:"+hname;
   #endif
   Hardware="Cpu";
   if(OmpThreads==1)RunMode="Single core";
@@ -425,8 +563,17 @@ void JSphCpu::ConfigRunMode(const JSphCfgRun *cfg,std::string preinfo){
 //==============================================================================
 void JSphCpu::InitRunCpu(){
   InitRun(Np,Idpc,Posc);
-
-  if(TStep==STEP_Verlet)memcpy(VelrhopM1c,Velrhopc,sizeof(tfloat4)*Np);
+  if(TStep==STEP_Verlet){
+    memcpy(VelrhopM1c,Velrhopc,sizeof(tfloat4)*Np);
+  }
+  /*if(UseEBG){
+    //memcpy(EBGrrthetac,EBGrrtheta0c,sizeof(tfloat3)*Np);
+    if(TStep==STEP_Verlet){
+      memcpy(EBGrrthetaM1c,EBGrrtheta0c,sizeof(tfloat3)*Np);
+      memcpy(EBGtensionM1c,EBGtensionc,sizeof(tfloat3)*Np);
+      memcpy(EBGforcesM1c,EBGforcesc,sizeof(tfloat3)*Np);
+    }
+  }*/
   if(TVisco==VISCO_LaminarSPS)memset(SpsTauc,0,sizeof(tsymatrix3f)*Np);
   if(CaseNfloat)InitFloating();
   if(MotionVelc)memset(MotionVelc,0,sizeof(tfloat3)*Np);
@@ -443,6 +590,12 @@ void JSphCpu::PreInteractionVars_Forces(unsigned np,unsigned npb){
   if(Deltac)memset(Deltac,0,sizeof(float)*np);                       //Deltac[]=0
   memset(Acec,0,sizeof(tfloat3)*np);                                 //Acec[]=(0,0,0)
   if(SpsGradvelc)memset(SpsGradvelc+npb,0,sizeof(tsymatrix3f)*npf);  //SpsGradvelc[]=(0,0,0,0,0,0).
+  if(UseEBG){
+    memset(EBGrrthetac,0,sizeof(tfloat3)*np);                        //EBGrrthetac[]=(0,0,0)
+    memset(EBGtensionc,0,sizeof(tfloat3)*np);                        //EBGtensionc[]=(0,0,0)
+    memset(EBGincompc,0,sizeof(tfloat3)*np);                         //EBGtensionc[]=(0,0,0)
+    memset(EBGforcesc,0,sizeof(tfloat4)*np);                         //EBGforces[]=(0,0,0,0)
+  }
 
   //-Select particles for shifting.
   if(ShiftPosfsc)Shifting->InitCpu(npf,npb,Posc,ShiftPosfsc);
@@ -469,6 +622,16 @@ void JSphCpu::PreInteraction_Forces(){
   //-Assign memory.
   Arc=ArraysCpu->ReserveFloat();
   Acec=ArraysCpu->ReserveFloat3();
+  //============================================================================
+  //- For EBG
+  if(UseEBG){
+    EBGrrthetac=ArraysCpu->ReserveFloat3();
+    EBGtensionc=ArraysCpu->ReserveFloat3();
+    EBGincompc=ArraysCpu->ReserveFloat3();
+    EBGforcesc=ArraysCpu->ReserveFloat4();
+  }
+  //============================================================================
+  
   if(DDTArray)Deltac=ArraysCpu->ReserveFloat();
   if(Shifting)ShiftPosfsc=ArraysCpu->ReserveFloat4();
   Pressc=ArraysCpu->ReserveFloat();
@@ -546,6 +709,11 @@ void JSphCpu::PosInteraction_Forces(){
   ArraysCpu->Free(ShiftPosfsc);  ShiftPosfsc=NULL;
   ArraysCpu->Free(Pressc);       Pressc=NULL;
   ArraysCpu->Free(SpsGradvelc);  SpsGradvelc=NULL;
+  //-EBG
+  ArraysCpu->Free(EBGrrthetac);  EBGrrthetac=NULL;
+  ArraysCpu->Free(EBGtensionc);  EBGtensionc=NULL;
+  ArraysCpu->Free(EBGincompc);   EBGincompc=NULL;
+  ArraysCpu->Free(EBGforcesc);   EBGforcesc=NULL;
 }
 
 //==============================================================================
@@ -931,6 +1099,143 @@ void JSphCpu::InteractionForcesDEM(unsigned nfloat,StDivDataCpu divdata,const un
   if(viscdt<demdt)viscdt=demdt;
 }
 
+//==============================================================================
+/// Perform EBG Interaction
+//==============================================================================  
+void JSphCpu::InteractionForcesEBG(unsigned n,unsigned pinit,StDivDataCpu divdata
+  ,const unsigned *dcell, const tdouble3 *pos
+  ,const typecode *code,const unsigned *idp
+  ,const tfloat4 *velrhop,tfloat3 *ace
+  ,const tfloat3 *ebgneigh,const tfloat3 *ebgrrtheta0
+  ,tfloat3 *ebgrrtheta,tfloat3 *ebgtension,tfloat4 *ebgforces
+  ,tdouble3 *ebgpos,tfloat3 *ebgincomp
+){
+  const int pfin=int(pinit+n);
+  //printf("Interaction\n");
+  printf("%18.12e %18.12e\n",Area0EBG, AreaEBG);
+  #ifdef OMP_USE
+    #pragma omp parallel for schedule (static)
+  #endif
+  for(unsigned c=MkBoundBegin;c<MkBoundBegin+MkBoundCount;c++){
+    unsigned ppref;
+    tdouble3 posref; tdouble3 posn1; tdouble3 posn2;
+    int pn1; int pn2;
+    //- Information of neighbouring particles and ref. particle
+    for(int p=int(pinit);p<pfin;p++)if(idp[p]==ebgneigh[c].x){
+      ppref=p;
+      posref=pos[p];
+      for(int p1=int(pinit);p1<pfin;p1++)if(idp[p1]==ebgneigh[idp[ppref]].y || idp[p1]==ebgneigh[idp[ppref]].z){
+        if(idp[p1]==ebgneigh[idp[ppref]].y){
+          pn1=p1;
+          posn1=pos[pn1];
+        }
+        else{
+          pn2=p1;
+          posn2=pos[pn2];
+        }
+      }
+    }
+
+   /* printf("%d\n", idp[ppref]);
+    printf("%18.12e %18.12e %18.12e\n", posref.x, posref.y, posref.z);*/
+    
+    //-Find |distance| and angle between two lines at ref. particle (ppref) 
+    ebgrrtheta[idp[ppref]]=fmath::AngleBetween2Lines(posref,posn1,posn2);
+    
+    const float drx1=float(posn1.x-posref.x); const float drx2=float(posn2.x-posref.x);
+          float dry1=float(posn1.y-posref.y);       float dry2=float(posn2.y-posref.y);
+    const float drz1=float(posn1.z-posref.z); const float drz2=float(posn2.z-posref.z);
+    
+    //-Tension Forces on ref.particle (ppref)
+    const float tensionN1=CrossAreaEBG*YoungsModEBG*((ebgrrtheta[idp[ppref]].x/ebgrrtheta0[idp[ppref]].x)-1.0)/(ebgrrtheta[idp[ppref]].x);
+    const float tensionN2=CrossAreaEBG*YoungsModEBG*((ebgrrtheta[idp[ppref]].y/ebgrrtheta0[idp[ppref]].y)-1.0)/(ebgrrtheta[idp[ppref]].y);
+    
+    ebgtension[idp[ppref]].x=tensionN1*drx1+tensionN2*drx2;  
+    ebgtension[idp[ppref]].y=tensionN1*dry1+tensionN2*dry2;
+    ebgtension[idp[ppref]].z=tensionN1*drz1+tensionN2*drz2;
+    
+    //-Moment for each EBG particles, with ppref as the center
+    const float mom=BendingRigidityEBG*(ebgrrtheta[idp[ppref]].z-ebgrrtheta0[idp[ppref]].z)/(ebgrrtheta[idp[ppref]].x+ebgrrtheta[idp[ppref]].y);
+
+    ebgforces[idp[ppref]].x=mom/(ebgrrtheta[idp[ppref]].x)*drz1;    //(Moment) Force.x acting on ppref from Neighbour1
+    ebgforces[idp[ppref]].y=mom/(ebgrrtheta[idp[ppref]].x)*(-drx1); //(Moment) Force.z acting on ppref from Neighbour1
+    ebgforces[idp[ppref]].z=mom/(ebgrrtheta[idp[ppref]].y)*(-drz2); //(Moment) Force.x acting on ppref from Neighbour2
+    ebgforces[idp[ppref]].w=mom/(ebgrrtheta[idp[ppref]].y)*drx2;    //(Moment) Force.z acting on ppref from Neighbour2
+
+    //-Incompressibility penalty forces at ref. particle based on over change in area
+    const float incompE=0.5*InComEBGConst*(AreaEBG-Area0EBG)/Area0EBG;
+    const double incompA=CalculateAreaEBG(MkBoundCount,EBGposc);
+
+    ebgincomp[idp[ppref]].x=-incompE*incompA*(drz2-drz1)/abs(incompA);
+    ebgincomp[idp[ppref]].y=0.0;
+    ebgincomp[idp[ppref]].z=-incompE*incompA*(drx1-drx2)/abs(incompA);
+  
+    if(idp[ppref]==21513){
+      printf("%18.12e %18.12e\n",ebgincomp[idp[ppref]].x,ebgincomp[idp[ppref]].z);
+    }  
+    /*if(idp[ppref]==207854){// || idp[ppref]==207788 || idp[ppref]==207789){
+      //printf("CALCULATE EBGFORCES AND EBGTENSION\n");
+      //printf("%f %f %f\n",drx1, dry1, drz1);
+      //printf("%f %f %f\n",drx2, dry2, drz2);
+      //printf("%f %f\n",drx1, drz1);
+      //printf("%f %f\n",drx2, drz2);
+      //printf("%f %f \n",ebgrrtheta[idp[ppref]].z,ebgrrtheta0[idp[ppref]].z);
+      //printf("%f %f \n",ebgrrtheta[idp[ppref]].x,ebgrrtheta[idp[ppref]].y);
+      //printf("%f \n",mom);
+      printf("%d %d %d\n",idp[ppref], (int)ebgneigh[idp[ppref]].y, (int)ebgneigh[idp[ppref]].z);
+      printf("%f %f\n",ebgforces[idp[ppref]].x,ebgforces[idp[ppref]].y);
+      printf("%f %f\n",ebgforces[idp[ppref]].z,ebgforces[idp[ppref]].w);
+      //printf("%f %f \n",ebgrrtheta0[idp[ppref]].x,ebgrrtheta0[idp[ppref]].y);
+      //printf("%f %f \n",ebgrrtheta[idp[ppref]].x,ebgrrtheta[idp[ppref]].y);
+      printf("%f %f %f\n",ebgtension[idp[ppref]].x,ebgtension[idp[ppref]].y,ebgtension[idp[ppref]].z);
+      printf("%f %f %f\n",ace[ppref].x,ace[ppref].y,ace[ppref].z);
+      printf("\n");
+    }*/
+  }
+  
+
+  //-Add EBG forces per mass to acceleration
+  for(unsigned c1=MkBoundBegin;c1<MkBoundBegin+MkBoundCount;c1++){
+    for(int p2=int(pinit);p2<pfin;p2++)if(idp[p2]==c1){
+      tfloat3 acep2=TFloat3(0);
+      int neigh1=int(ebgneigh[idp[p2]].y); int neigh2=int(ebgneigh[idp[p2]].z);
+    
+      acep2.x=ebgtension[idp[p2]].x+ebgforces[idp[p2]].x+ebgforces[idp[p2]].z+ebgincomp[idp[p2]].x;  //Forces.x acting on p2
+      acep2.y=ebgtension[idp[p2]].y;
+      acep2.z=ebgtension[idp[p2]].z+ebgforces[idp[p2]].y+ebgforces[idp[p2]].w+ebgincomp[idp[p2]].z;  //Forces.x acting on p2
+    
+      if(idp[p2]==ebgneigh[neigh1].y){
+        acep2.x-=ebgforces[neigh1].x;
+        acep2.z-=ebgforces[neigh1].y;
+      }
+      else if(idp[p2]==ebgneigh[neigh1].z){
+        acep2.x-=ebgforces[neigh1].z;
+        acep2.z-=ebgforces[neigh1].w;
+      }
+      if(idp[p2]==ebgneigh[neigh2].y){
+        acep2.x-=ebgforces[neigh2].x;
+        acep2.z-=ebgforces[neigh2].y;
+      }
+      else if(idp[p2]==ebgneigh[neigh2].z){
+        acep2.x-=ebgforces[neigh2].z;
+        acep2.z-=ebgforces[neigh2].w;
+      }
+      
+      if(acep2.x||acep2.y||acep2.z){
+        ace[p2]=ace[p2]+acep2;
+      }
+    
+      /*if(idp[p2]==207787){
+        //printf("CHECK IF INFORMATION IS CARRIED FORWARD PROPERLY\n");
+        printf("%d\n",idp[p2]);
+        printf("%d %d\n",neigh1, neigh2);
+        printf("%f %f %f\n",acep2.x,acep2.y,acep2.z);
+        printf("%f %f %f\n",ace[p2].x,ace[p2].y,ace[p2].z);
+        printf("\n");
+      }*/
+    }
+  }
+}
 
 //==============================================================================
 /// Computes sub-particle stress tensor (Tau) for SPS turbulence model.   
@@ -1031,7 +1336,7 @@ template<TpKernel tker,bool sim2d,TpSlipMode tslip> void JSphCpu::InteractionMdb
 {
   if(tslip==SLIP_FreeSlip)Run_Exceptioon("SlipMode=\'Free slip\' is not yet implemented...");
   const int nn=int(n);
-  #ifdef OMP_USE
+  #ifdef _WITHOMP
     #pragma omp parallel for schedule (guided)
   #endif
   for(int p1=0;p1<nn;p1++)if(boundnormal[p1]!=TFloat3(0)){
@@ -1059,7 +1364,7 @@ template<TpKernel tker,bool sim2d,TpSlipMode tslip> void JSphCpu::InteractionMdb
         const float dry=float(gposp1.y-pos[p2].y);
         const float drz=float(gposp1.z-pos[p2].z);
         const float rr2=(drx*drx + dry*dry + drz*drz);
-        if(rr2<=KernelSize2 && CODE_IsFluid(code[p2])){//-Only with fluid particles (including inout).
+        if(rr2<=KernelSize2 && rr2>=ALMOSTZERO && CODE_IsFluid(code[p2])){//-Only with fluid particles (including inout).
           //-Wendland kernel.
           float fac;
           const float wab=fsph::GetKernel_WabFac<tker>(CSP,rr2,fac);
@@ -1479,7 +1784,7 @@ void JSphCpu::ComputeSymplecticPre(double dt){
       Posc[p]=PosPrec[p];
     }
   }
-
+  
   //-Copy previous position of boundary. | Copia posicion anterior del contorno.
   memcpy(Posc,PosPrec,sizeof(tdouble3)*Npb);
 
@@ -1564,6 +1869,9 @@ void JSphCpu::ComputeSymplecticCorr(double dt){
   //-Free memory assigned to variables Pre and ComputeSymplecticPre(). | Libera memoria asignada a variables Pre en ComputeSymplecticPre().
   ArraysCpu->Free(PosPrec);      PosPrec=NULL;
   ArraysCpu->Free(VelrhopPrec);  VelrhopPrec=NULL;
+  ArraysCpu->Free(EBGrrthetaPrec);  EBGrrthetaPrec=NULL;
+  ArraysCpu->Free(EBGtensionPrec);  EBGtensionPrec=NULL;
+  ArraysCpu->Free(EBGforcesPrec);   EBGforcesPrec=NULL;
   TmcStop(Timers,TMC_SuComputeStep);
 }
 
@@ -1888,4 +2196,38 @@ void JSphCpu::GetTimersInfo(std::string &hinfo,std::string &dinfo)const{
   }
 }
 
+
+//==============================================================================
+/// Calculate area encapsulated within EBG particles.
+//==============================================================================
+double JSphCpu::CalculateAreaEBG(const unsigned npebg,const tdouble3 *ebgpos){
+  double area=0;
+  for(unsigned pp=0;pp<npebg;pp++){
+    if((pp+1)<npebg){
+      area+=ebgpos[pp].y*ebgpos[pp+1].z-ebgpos[pp].z*ebgpos[pp+1].y;
+    }
+    else if((pp+1)>=npebg){
+      area+=ebgpos[pp].y*ebgpos[0].z-ebgpos[pp].z*ebgpos[0].y;
+    }
+  }
+  //area=abs(area)/2.0;
+  return(area);
+}
+
+//==============================================================================
+/// Replace EBG particles position based on index.
+//==============================================================================
+void JSphCpu::UpdateEBGposc(const unsigned nini,const unsigned nfin, const unsigned npebg
+  ,const unsigned *idp,const tdouble3 *pos, tdouble3 *ebgpos)
+{
+  for(unsigned pp=nini;pp<nfin;pp++)if(idp[pp]>=MkBoundBegin && idp[pp]<MkBoundBegin+MkBoundCount){
+    for(unsigned cc=0;cc<npebg;cc++){
+      if(idp[pp]==(int)ebgpos[cc].x){
+	ebgpos[cc].y=pos[pp].x;
+	ebgpos[cc].z=pos[pp].z;
+//	ebgpos[cc].w=pos[pp].z;
+      }
+    }
+  }
+}
 
