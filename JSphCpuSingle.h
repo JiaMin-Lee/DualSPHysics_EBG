@@ -56,6 +56,7 @@ protected:
   void RunCellDivide(bool updateperiodic);
   void AbortBoundOut();
 
+  void EBGInformation(); //-EBG Interaction Section
   void Interaction_Forces(TpInterStep tinterstep);
   void MdbcBoundCorrection();
 
