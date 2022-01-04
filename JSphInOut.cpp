@@ -235,14 +235,14 @@ void JSphInOut::AllocateMemory(unsigned listsize){
     VelData  =new tfloat4 [size*2];
     Zsurf    =new float   [size];
     {
-      memset(Planes   ,0,sizeof(tplane3f)*size);
-      memset(CfgZone  ,0,sizeof(byte    )*size);
-      memset(CfgUpdate,0,sizeof(byte    )*size);
-      memset(Width    ,0,sizeof(float   )*size);
-      memset(DirData  ,0,sizeof(tfloat3 )*size);
-      memset(DirVel   ,0,sizeof(tfloat3 )*size);
-      memset(VelData  ,0,sizeof(tfloat4 )*size*2);
-      memset(Zsurf    ,0,sizeof(float   )*size);
+      memset(Planes   ,255,sizeof(tplane3f)*size);
+      memset(CfgZone  ,255,sizeof(byte    )*size);
+      memset(CfgUpdate,255,sizeof(byte    )*size);
+      memset(Width    ,255,sizeof(float   )*size);
+      memset(DirData  ,255,sizeof(tfloat3 )*size);
+      memset(DirVel   ,255,sizeof(tfloat3 )*size);
+      memset(VelData  ,255,sizeof(tfloat4 )*size*2);
+      memset(Zsurf    ,255,sizeof(float   )*size);
     }
   }
   catch(const std::bad_alloc){
@@ -675,7 +675,7 @@ void JSphInOut::LoadInitPartsData(unsigned idpfirst,unsigned nparttot
   unsigned npart=0;
   for(unsigned ci=0;ci<GetCount();ci++){
     const unsigned np=List[ci]->GetNpartInit();
-    //Log->Printf(" LoadInitPartsData--> np:%u  npart:%u",np,npart);
+    //Log->Printf(" LoadInitPartsData-->Getcount:%u np:%u  npart:%u  nparttot:%u",GetCount(),np,npart,nparttot);
     if(npart+np>nparttot)Run_Exceptioon("Number of initial inlet/outlet particles is invalid.");
     List[ci]->LoadInitialParticles(np,pos+npart);
     for(unsigned cp=0;cp<np;cp++){
@@ -688,6 +688,18 @@ void JSphInOut::LoadInitPartsData(unsigned idpfirst,unsigned nparttot
   }
   //Log->Printf(" LoadInitPartsData--> npart:%u",npart);
   if(npart!=nparttot)Run_Exceptioon("Number of initial inlet/outlet particles is invalid.");
+}
+
+//==============================================================================
+///// For Restarting change code for unrecognised particles to fluid
+////==============================================================================
+void JSphInOut::LoadModifyCode(const unsigned npprev,const unsigned npnow
+  ,unsigned* idp,typecode* code,tdouble3* pos,tfloat4* velrhop)
+{
+  printf("NpPrev:%u NpNow:%u\n",npprev,npnow);
+  for(unsigned pp=npprev;pp<npnow;pp++){
+    code[pp]=typecode(CODE_TYPE_FLUID);
+  }
 }
 
 //==============================================================================
@@ -804,6 +816,8 @@ unsigned JSphInOut::CreateListCpu(unsigned npf,unsigned pini
     const unsigned pfin=pini+npf;
     for(unsigned p=pini;p<pfin;p++){
       const typecode rcode=code[p];
+/*      if (idp[p]==199 || idp[p]==204 || idp[p]==279 || idp[p]==188 || idp[p]==161){
+         printf("p:%u, Idp:%u, Code=%u\n",p, idp[p], code[p]);}*/
       if(CODE_IsNormal(rcode) && CODE_IsFluid(rcode)){//-It includes only normal fluid particles (no periodic).
         if(CODE_IsFluidInout(rcode)){//-Particles already selected as InOut.
           inoutpart[count]=p; count++;
@@ -1106,6 +1120,95 @@ if(izone>=ListSize)Run_Exceptioon(fun::PrintStr("%d>> Value izone %d is invalid 
   return(unsigned(newnp));
 }
 
+//==============================================================================
+/// ComputeStep over inout particles Restart:
+/// - If particle is moved to fluid zone then it changes to fluid particle and 
+///   it creates a new inout particle.
+/// - If particle is moved out the domain then it changes to ignore particle.
+//==============================================================================
+unsigned JSphInOut::ComputeStepCpuRestart(unsigned inoutcount,int *inoutpart
+  ,const JSphCpu *sphcpu,unsigned idnext,unsigned sizenp,unsigned np
+  ,tdouble3 *pos,unsigned *dcell,typecode *code,unsigned *idp,const byte *zsurfok
+  ,tfloat4 *velrhop,byte *newizone)
+{
+  //-Updates code according to particle position and define new particles to create.
+  const int ncp=int(inoutcount);
+/*  printf("JSphInOut::ComputeStepCpuRestart\n");
+  printf("ncp=%d\n",ncp);*/
+  //Log->Printf("%d>==>> ComputeStepCpu  ncp:%d",nstep,ncp);
+  #ifdef OMP_USE
+    #pragma omp parallel for schedule (static)
+  #endif
+  for(int cp=0;cp<ncp;cp++){
+    typecode cod=0;
+    byte newiz=255;
+    const unsigned p=(unsigned)inoutpart[cp];
+    const typecode rcode=code[p];
+    const unsigned izone0=CODE_GetIzoneFluidInout(rcode);
+    const unsigned izone=(izone0&CODE_TYPE_FLUID_INOUT015MASK); //-Substract 16 to obtain the actual zone (0-15).
+if(izone>=ListSize)Run_Exceptioon(fun::PrintStr("%d>> Value izone %d is invalid of idp[%d]=%d.",Nstep,izone,p,idp[p]));
+    const byte cfupdate=CfgUpdate[izone];
+    const bool refilladvan=(cfupdate&JSphInOutZone::RefillAdvanced_MASK)!=0;
+    const bool refillsfull=(cfupdate&JSphInOutZone::RefillSpFull_MASK  )!=0;
+    const bool removeinput=(cfupdate&JSphInOutZone::RemoveInput_MASK   )!=0;
+    const bool removezsurf=(cfupdate&JSphInOutZone::RemoveZsurf_MASK   )!=0;
+    const bool converinput=(cfupdate&JSphInOutZone::ConvertInput_MASK  )!=0;
+    const tfloat3 ps=ToTFloat3(pos[p]);
+    const bool zok=(zsurfok? (zsurfok[cp]!=0): (ps.z<=Zsurf[izone]));
+   if(izone0>=16){//-Normal fluid particle in zone inlet/outlet.
+      //if(removeinput || (removezsurf && !zok))cod=CODE_SetOutPos(rcode); //-Normal fluid particle in zone inlet/outlet is removed.
+      //else cod=(converinput? rcode^0x10: CodeNewPart); //-Converts to inout particle or not.
+      cod=rcode^0x10; //-Converts to inout particle or not.
+    }
+    else{//-Previous inout fluid particle.
+      const float displane=-fgeo::PlaneDistSign(Planes[izone],ps);
+      if(displane>Width[izone] || (removezsurf && !zok)){
+        cod=CODE_SetOutIgnore(rcode); //-Particle is moved out domain.
+      }
+      else if(displane<0){
+        cod=CodeNewPart;//-Inout particle changes to fluid particle.
+        if(!refilladvan && (refillsfull || zok))newiz=byte(izone); //-A new particle is created.
+      }
+    }
+    newizone[cp]=newiz;
+    if(cod!=0)code[p]=cod;
+/*    if(idp[p]==199 || idp[p]==204 || idp[p]==279 || idp[p]==188){
+    printf("%u, p:%u, Idp:%u, Code:%u \n",cp, p, idp[p], code[p]);}*/
+  }
+
+  //-Create list for new inlet particles to create.
+ /* unsigned inoutcount2=inoutcount;
+  for(int cp=0;cp<ncp;cp++)if(newizone[cp]<16){
+    if(inoutcount2<sizenp)inoutpart[inoutcount2]=cp;
+    inoutcount2++;
+  }
+  if(inoutcount2>=sizenp)Run_Exceptioon("Allocated memory is not enough for new particles inlet.");*/
+
+  //-Creates new inlet particles to replace the particles moved to fluid domain.
+  const int newnp=0;//int(np-npprev);
+  #ifdef OMP_USE
+    #pragma omp parallel for schedule (static)
+  #endif
+  //for(int cp=0;cp<np;cp++){
+  for(unsigned cp=0;cp<np;cp++){
+/*    const unsigned cp0=(unsigned)inoutpart[inoutcount+cp];
+    const unsigned p=(unsigned)inoutpart[cp0];
+    const unsigned izone=newizone[cp0];
+    const double dis=Width[izone];*/
+    tdouble3 rpos=pos[cp];
+/*    rpos.x-=dis*DirData[izone].x;
+    rpos.y-=dis*DirData[izone].y;
+    rpos.z-=dis*DirData[izone].z;*/
+    /*const unsigned p2=np+cp;
+    code[p2]=CODE_ToFluidInout(CodeNewPart,izone);
+    sphcpu->UpdatePos(rpos,0,0,0,false,p2,pos,dcell,code);*/
+    sphcpu->UpdatePos(rpos,0,0,0,false,cp,pos,dcell,code);
+    /*idp[p2]=idnext+cp;
+    velrhop[p2]=TFloat4(0,0,0,1000);*/
+  }
+  //-Returns number of new inlet particles.
+  return(unsigned(newnp));
+}
 #ifdef _WITHGPU
 //==============================================================================
 /// ComputeStep over inlet/outlet particles:
@@ -1145,6 +1248,8 @@ unsigned JSphInOut::ComputeStepFillingCpu(unsigned inoutcount,int *inoutpart
 {
   //-Updates position of particles and computes projection data to filling mode.
   const int ncp=int(inoutcount);
+  printf("ncp = %u \n",ncp);
+
   memset(prodist,0,sizeof(float)*ncp);
   memset(propos,0,sizeof(tdouble3)*ncp);
   #ifdef OMP_USE

@@ -187,6 +187,7 @@ public:
     ,JGaugeSystem *gaugesystem,JNumexLib *nuxlib);
     
   void LoadInitPartsData(unsigned idpfirst,unsigned npart,unsigned* idp,typecode* code,tdouble3* pos,tfloat4* velrhop);
+  void LoadModifyCode(const unsigned npprev,const unsigned npnow,unsigned* idp,typecode* code,tdouble3* pos,tfloat4* velrhop);
   void InitCheckProximity(unsigned np,unsigned newnp,float scell,const tdouble3* pos,const unsigned *idp,typecode *code);
 
 
@@ -206,6 +207,10 @@ public:
 
   void CheckPartsIzone(std::string key,unsigned nstep,unsigned inoutcount,const int *inoutpart,typecode *code,unsigned *idp);
   unsigned ComputeStepCpu(unsigned inoutcount,int *inoutpart
+    ,const JSphCpu *sphcpu,unsigned idnext,unsigned sizenp,unsigned np
+    ,tdouble3 *pos,unsigned *dcell,typecode *code,unsigned *idp,const byte *zsurfok
+    ,tfloat4 *velrhop,byte *newizone);
+  unsigned ComputeStepCpuRestart(unsigned inoutcount,int *inoutpart
     ,const JSphCpu *sphcpu,unsigned idnext,unsigned sizenp,unsigned np
     ,tdouble3 *pos,unsigned *dcell,typecode *code,unsigned *idp,const byte *zsurfok
     ,tfloat4 *velrhop,byte *newizone);

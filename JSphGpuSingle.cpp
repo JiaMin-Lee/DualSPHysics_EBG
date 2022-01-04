@@ -200,7 +200,7 @@ void JSphGpuSingle::ConfigDomain(){
   //-Creates object for Celldiv on the GPU and selects a valid cellmode.
   //-Crea objeto para divide en GPU y selecciona un cellmode valido.
   CellDivSingle=new JCellDivGpuSingle(Stable,FtCount!=0,PeriActive,KernelSize2,PosCellSize
-    ,CellDomFixed,CellMode,Scell,Map_PosMin,Map_PosMax,Map_Cells,CaseNbound,CaseNfixed,CaseNpb,DirOut);
+    ,CellMode,Scell,Map_PosMin,Map_PosMax,Map_Cells,CaseNbound,CaseNfixed,CaseNpb,DirOut);
   CellDivSingle->DefineDomain(DomCellCode,DomCelIni,DomCelFin,DomPosMin,DomPosMax);
   ConfigCellDiv((JCellDivGpu*)CellDivSingle);
 
@@ -328,8 +328,6 @@ void JSphGpuSingle::RunPeriodic(){
 /// Ejecuta divide de particulas en celdas.
 //==============================================================================
 void JSphGpuSingle::RunCellDivide(bool updateperiodic){
-  //JDebugSphGpu::SaveVtk("_DG_Divide_Pre.vtk",Nstep,0,Np,"all",this);
-
   DivData=DivDataGpuNull();
   //-Creates new periodic particles and marks the old ones to be ignored.
   //-Crea nuevas particulas periodicas y marca las viejas para ignorarlas.
