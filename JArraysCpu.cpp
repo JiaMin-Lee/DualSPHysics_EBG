@@ -137,7 +137,7 @@ void JArraysCpuSize::SetArrayCount(unsigned count){
 /// If there is any array in use raises an exception.
 //==============================================================================
 void JArraysCpuSize::SetArraySize(unsigned size){
-  if(CountUsed)Run_Exceptioon("Unable to change the dimension of the arrays because some are in use.");
+  //if(CountUsed)Run_Exceptioon("Unable to change the dimension of the arrays because some are in use.");
   if(ArraySize!=size){
     ArraySize=size;
     unsigned count=Count;

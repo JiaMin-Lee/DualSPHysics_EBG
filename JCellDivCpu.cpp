@@ -30,15 +30,12 @@ using namespace std;
 /// Constructor.
 //==============================================================================
 JCellDivCpu::JCellDivCpu(bool stable,bool floating,byte periactive
-  ,bool celldomfixed,TpCellMode cellmode,float scell
-  ,tdouble3 mapposmin,tdouble3 mapposmax,tuint3 mapcells
+  ,TpCellMode cellmode,float scell,tdouble3 mapposmin,tdouble3 mapposmax,tuint3 mapcells
   ,unsigned casenbound,unsigned casenfixed,unsigned casenpb,std::string dirout
   ,bool allocfullnct,float overmemorynp,word overmemorycells)
   :Log(AppInfo.LogPtr()),Stable(stable),Floating(floating),PeriActive(periactive)
-  ,CellDomFixed(celldomfixed),CellMode(cellmode)
-  ,ScellDiv(cellmode==CELLMODE_Full? 1: (cellmode==CELLMODE_Half? 2: 0))
-  ,Scell(scell),OvScell(1.f/scell)
-  ,Map_PosMin(mapposmin),Map_PosMax(mapposmax),Map_PosDif(mapposmax-mapposmin)
+  ,CellMode(cellmode),ScellDiv(cellmode==CELLMODE_Full? 1: (cellmode==CELLMODE_Half? 2: 0)),Scell(scell)
+  ,OvScell(1.f/scell),Map_PosMin(mapposmin),Map_PosMax(mapposmax),Map_PosDif(mapposmax-mapposmin)
   ,Map_Cells(mapcells),CaseNbound(casenbound),CaseNfixed(casenfixed),CaseNpb(casenpb)
   ,DirOut(dirout),AllocFullNct(allocfullnct),OverMemoryNp(overmemorynp),OverMemoryCells(overmemorycells)
 {
@@ -133,6 +130,7 @@ void JCellDivCpu::AllocMemoryNp(ullong np){
   FreeMemoryNp();
   np=np+PARTICLES_OVERMEMORY_MIN;
   SizeNp=unsigned(np);
+  printf("AllocMemoryNp SizeNp =%u\n",SizeNp);
   //-Check number of particles | Comprueba numero de particulas.
   if(np!=SizeNp)Run_Exceptioon(string("Failed memory allocation for ")+fun::UlongStr(np)+" particles.");
   //-Reserve memory for particles | Reserva memoria para particulas.
@@ -359,7 +357,7 @@ void JCellDivCpu::SortArray(word *vec){
   #ifdef OMP_USE
     #pragma omp parallel for schedule (static) if(n>OMP_LIMIT_COMPUTELIGHT)
   #endif
-  for(int p=ini;p<n;p++)VSortWord[p]=vec[SortPart[p]];
+  for(int p=ini;p<n;p++) VSortWord[p]=vec[SortPart[p]];
   memcpy(vec+ini,VSortWord+ini,sizeof(word)*(n-ini));
 }
 
