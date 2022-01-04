@@ -38,6 +38,7 @@
 #include "JSphCfgRun.h"
 #include "JLog2.h"
 #include "JTimer.h"
+#include "FunctionsMath.h"
 #include <float.h>
 #include <string>
 #include <cmath>
@@ -280,6 +281,11 @@ protected:
   double PartBeginTimeStep;   ///<initial instant of the simulation                       | Instante de inicio de la simulacion.                                          
   ullong PartBeginTotalNp;    ///<Total number of simulated particles.
 
+  //-Variables to restart simulation with INOUT BOUNDARY
+  std::string RestartBeginDir;   ///<Searches directory for starting PART.                   | Directorio donde busca el PART de arranque.
+  unsigned RestartBegin;         ///<Indicates the start (0: no resumption).                 | Indica el PART de arranque (0:Sin reanudacion).
+  bool RestartDivideFull;
+ 
   JDsPartsOut *PartsOut;        ///<Stores excluded particles until they are saved. | Almacena las particulas excluidas hasta su grabacion.
   bool WrnPartsOut;           ///<Active warning according to number of out particles (default=1).
 
@@ -338,7 +344,6 @@ protected:
   JDsPips *DsPips;          ///<Object for PIPS calculation.
 
   //-Variables for division in cells.
-  bool CellDomFixed;       ///<The Cell domain is fixed according maximum domain size.
   TpCellMode CellMode;     ///<Cell division mode.
   int ScellDiv;            ///<Value to divide KernelSize (1 or 2).
   float Scell;             ///<Cell size: KernelSize/ScellDiv (KernelSize or KernelSize/2).
@@ -410,6 +415,31 @@ protected:
 
   bool SaveFtAce;    ///<Indicates whether linear and angular accelerations of each floating objects are saved.
   void SaveFtAceFun(double dt,bool predictor,StFtoForces *ftoforces);
+  
+  // ======================================================================
+  // Element Bending Group (EBG)
+  // ======================================================================
+  bool UseEBG;               ///< Enable use of EBG
+  unsigned EBGBound;         ///< 1 for structural boundary particles (basically EBG particles) | 0 for fluid structural boundary particles
+  float DensityEBG;          ///< Density of EBG boundary particles
+  float MassEBG;             ///< Mass of EBG particles
+  float ViscosityEBG;        ///< Viscosity of EBG particles 
+  float YoungsModEBG;        ///< Young's Modulus of EBG particles
+  float CrossAreaEBG;        ///< Cross-sectional area of EBG particles
+  float BendingRigidityEBG;  ///< Bending Rigidity of EBG particles
+  float InComEBGConst; 	     ///< Incompressibility of EBG constant
+  unsigned MkEBG;            ///< Block of the EBG particles
+  unsigned MkEBGBound;       ///< Mk of the EBG boundary particles
+  unsigned MkBoundBegin;     ///< Begin of EBG particle ID
+  unsigned MkBoundCount;     ///< Number of EBG particles
+  unsigned NpEBG;            ///< Number of EBG particles
+
+  unsigned MkEBGFluid;       ///< Mk of the EBG Fluid
+  unsigned IdEBGFluid;       ///< Begin Fluid particle ID
+  unsigned NpEBGFluid;       ///< Number of fluid particles within EBG particles
+
+  tdouble3 EBGCenter;        ///< EBG Center
+  // ======================================================================
 
 
 protected:
@@ -432,6 +462,15 @@ protected:
   void LoadCodeParticles(unsigned np,const unsigned *idp,typecode *code)const;
   void LoadBoundNormals(unsigned np,unsigned npb,const unsigned *idp,const typecode *code,tfloat3 *boundnormal);
   void ConfigBoundNormals(unsigned np,unsigned npb,const tdouble3 *pos,const unsigned *idp,tfloat3 *boundnormal);
+  
+  // ======================================================================
+  // To calculate EBG neighbour list and Initial EBG RR and theta
+  // ======================================================================
+  void ConfigNeighbourList(const unsigned np,const unsigned ebgnpbegin,const unsigned ebgnpcount
+    ,const tdouble3 ebgcenter
+    ,const tdouble3 *pos,const unsigned *idp
+    ,tfloat3 *ebgneigh,tfloat3 *ebgrrtheta0, tdouble3 *ebgpos);
+  // ======================================================================
 
   void PrepareCfgDomainValues(tdouble3 &v,tdouble3 vdef=TDouble3(0))const;
   void ResizeMapLimits();
@@ -457,7 +496,9 @@ protected:
   void RestartCheckData();
   void CheckRhopLimits();
   void LoadCaseParticles();
+  void LoadRestartParticles();
   void InitRun(unsigned np,const unsigned *idp,const tdouble3 *pos);
+  void RestartRun(unsigned np,const unsigned *idp,const tdouble3 *pos);
 
   bool CalcMotion(double stepdt);
   void CalcMotionWaveGen(double stepdt);

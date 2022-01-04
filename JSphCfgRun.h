@@ -44,8 +44,7 @@ public:
 
   int OmpThreads;
 
-  bool CellDomFixed;    ///<The Cell domain is fixed according maximum domain size.
-  TpCellMode CellMode;  ///<Cell division mode.
+  TpCellMode CellMode;
   int TBoundary;        ///<Boundary method: 0:None, 1:DBC (by default), 2:mDBC (SlipMode: 1:DBC vel=0)
   int SlipMode;         ///<Slip mode for mDBC: 0:None, 1:DBC vel=0, 2:No-slip, 3:Free slip (default=1).
   int MdbcFastSingle;   ///<Matrix calculations are done in single precision (default=1). 
@@ -65,6 +64,8 @@ public:
   std::string CaseName,RunName,DirOut,DirDataOut;
   std::string PartBeginDir;
   unsigned PartBegin,PartBeginFirst;
+  std::string RestartBeginDir;	///<Added for Restart for inout boundary
+  unsigned RestartBegin;	///<Added for Restart for inout boundary
   float FtPause;
   bool RhopOutModif;              ///<Indicates whether \ref RhopOutMin or RhopOutMax is changed.
   float RhopOutMin,RhopOutMax;    ///<Limits for \ref RhopOut density correction.

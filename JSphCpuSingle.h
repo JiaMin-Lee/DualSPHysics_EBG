@@ -56,6 +56,7 @@ protected:
   void RunCellDivide(bool updateperiodic);
   void AbortBoundOut();
 
+  void EBGInformation(); //-EBG Interaction Section
   void Interaction_Forces(TpInterStep tinterstep);
   void MdbcBoundCorrection();
 
@@ -91,6 +92,8 @@ public:
 //--------------------------------------------
 protected:
   void InOutInit(double timestepini);
+//  void InOutRestart(double timestepini);
+  void InOutRestart(double timestepini, const unsigned npprev, const unsigned nptot);
   void InOutIgnoreFluidDef(const std::vector<unsigned> &mkfluidlist);
   void InOutCheckProximity(unsigned newnp);
   void InOutComputeStep(double stepdt);

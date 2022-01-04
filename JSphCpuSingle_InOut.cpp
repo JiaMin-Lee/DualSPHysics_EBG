@@ -138,6 +138,87 @@ void JSphCpuSingle::InOutInit(double timestepini){
 }
 
 //==============================================================================
+/// Initialises inlet/outlet conditions.
+/// Inicia condiciones inlet/outlet.
+//==============================================================================
+void JSphCpuSingle::InOutRestart(double timestepini, const unsigned npprev, const unsigned nptot){
+  const double newtimestep=timestepini;
+  InOut->Nstep=Nstep; //-For debug.
+  TmcStart(Timers,TMC_SuInOut);
+  Log->Print("\n\nInitialising InOut Restart...");
+  const unsigned NpPrev=npprev;
+  const unsigned NpNow=nptot;
+
+  if(!CheckCpuParticlesSize(Np+InOut->GetCurrentNp())){
+    if(!InOut->GetNpResizePlus1())Run_Exceptioon("Allocated memory is not enough and resizing is not allowed by XML configuration (check the value inout.memoryresize.size).");
+    const unsigned newnp2=InOut->GetCurrentNp()+InOut->GetNpResizePlus1();
+    TmcStop(Timers,TMC_SuInOut);
+    ResizeParticlesSize(Np+newnp2,0,false);
+    CellDivSingle->SetIncreaseNp(newnp2);
+    TmcStart(Timers,TMC_SuInOut);
+  }
+
+  InOut->LoadModifyCode(NpPrev,NpNow,Idpc,Codec,Posc,Velrhopc);
+/*  //-Updates Velocity data of inout zones according to current timestep.
+  InOut->UpdateVelData(newtimestep);
+  //-Updates Zsurf data of inout zones according to current timestep.
+  InOut->UpdateZsurfData(newtimestep,false);*/
+
+  //-Create and remove inout particles.
+  unsigned newnp=0;
+  {
+    byte *zsurfok=NULL;
+    //-Creates list with current inout particles and normal fluid (no periodic) in inout zones.
+    int *inoutpart=ArraysCpu->ReserveInt();
+    const unsigned inoutcountpre=InOut->CreateListCpu(Np-Npb,Npb,Posc,Idpc,Codec,inoutpart);
+
+    DgSaveVtkParticlesCpu("CfgInOut_InletRestart.vtk",0,0,Np,Posc,Codec,Idpc,Velrhopc);
+    //-Updates code of inout particles according its position and create new inlet particles when refilling=false.
+    byte *newizone=ArraysCpu->ReserveByte();
+    newnp=InOut->ComputeStepCpuRestart(inoutcountpre,inoutpart,this,IdMax+1,CpuParticlesSize
+      ,Np,Posc,Dcellc,Codec,Idpc,zsurfok,Velrhopc,newizone);
+    ArraysCpu->Free(newizone);  newizone=NULL;
+    ArraysCpu->Free(inoutpart);
+    ArraysCpu->Free(zsurfok);
+
+  }
+
+  //-Updates Velocity data of inout zones according to current timestep.
+  InOut->UpdateVelData(newtimestep);
+  //-Updates Zsurf data of inout zones according to current timestep.
+  InOut->UpdateZsurfData(newtimestep,false);
+/*  //-Updates new particle values for Laminar+SPS.
+  if(SpsTauc)memset(SpsTauc+Np,0,sizeof(tsymatrix3f)*newnp);*/
+
+//  newnp=NpNow-NpPrev;
+  printf("newnp = %u\n",newnp);
+  //-Updates number of particles.
+  if(newnp){
+    Np+=newnp;
+    TotalNp+=newnp;
+    InOut->AddNewNp(newnp);
+    IdMax=unsigned(TotalNp-1);
+  }
+
+  DgSaveVtkParticlesCpu("CfgInOut_InletRestart.vtk",1,0,Np,Posc,Codec,Idpc,Velrhopc);
+  printf("JSphCpuSingle::InOutRestart IdMax = %u \n",IdMax);
+  //-Updates divide information.
+  TmcStop(Timers,TMC_SuInOut);
+  RunCellDivide(true);
+  TmcStart(Timers,TMC_SuInOut);
+
+/*  for(unsigned pp=0;pp<NpNow;pp++){
+    if((pp>=NpNow-14) && (pp<NpNow)){
+    printf("pp:%u, Id:%u Codec:%u ",pp,Idpc[pp],Codec[pp]);
+    printf("x:%f , z:%f \n",Posc[pp].x,Posc[pp].z);}
+  }*/
+  //-Updates inout particle data according inlet configuration.
+  InOutUpdatePartsData(newtimestep);
+  DgSaveVtkParticlesCpu("CfgInOut_InletRestart.vtk",2,0,Np,Posc,Codec,Idpc,Velrhopc);
+
+  TmcStop(Timers,TMC_SuInOut);
+}
+//==============================================================================
 /// ComputeStep over inlet/outlet particles:
 /// - Move particles in/out according its velocity.
 /// - If particle is moved to fluid zone then it changes to fluid particle and 
@@ -149,6 +230,7 @@ void JSphCpuSingle::InOutComputeStep(double stepdt){
   InOut->Nstep=Nstep; //-For debug.
   //Log->Printf("%u>--------> [InOutComputeStep_000]",Nstep);
   //DgSaveVtkParticlesCpu("_ComputeStep_XX.vtk",0,0,Np,Posc,Codec,Idpc,Velrhopc);
+  //DgSaveVtkParticlesCpu("_ComputeStep_XX.vtk",Nstep,0,Np,Posc,Codec,Idpc,Velrhopc);
   TmcStart(Timers,TMC_SuInOut);
   //-Resizes memory when it is necessary. InOutCount is the maximum number of new inlet particles.
   if(!CheckCpuParticlesSize(Np+InOut->GetCurrentNp())){

@@ -224,6 +224,11 @@ void JSph::InitVars(){
   PartBeginTimeStep=0; 
   PartBeginTotalNp=0;
 
+  //For RESTARTING
+  RestartBeginDir=""; 
+  RestartBegin=0;
+  RestartDivideFull=false;
+
   WrnPartsOut=true;
 
   FtCount=0;
@@ -235,7 +240,6 @@ void JSph::InitVars(){
 
   AllocMemoryFloating(0,false);
 
-  CellDomFixed=false;
   CellMode=CELLMODE_None;
   ScellDiv=0;
   Scell=0;
@@ -275,6 +279,33 @@ void JSph::InitVars(){
   MaxNumbers.Clear();
 
   SaveFtAce=false;
+  
+  //==============================================================================
+  // Initialisation of EBG
+  //==============================================================================
+  UseEBG=false;
+  EBGBound=0;
+  DensityEBG=0; 
+  MassEBG=0;
+  ViscosityEBG=0;
+  YoungsModEBG=0;
+  CrossAreaEBG=0;
+  BendingRigidityEBG=0;
+  InComEBGConst=0;
+  MkEBG=0;
+  MkEBGBound=0;
+  MkEBGFluid=0;
+  MkBoundBegin=0;
+  MkBoundCount=0;
+  NpEBG=0;
+
+  MkEBGFluid=0;
+  IdEBGFluid=0;      ///< Begin Fluid particle ID
+  NpEBGFluid=0;      ///< Number of fluid particles within EBG particles
+
+  EBGCenter=TDouble3(0);
+  //==============================================================================
+  
 }
 
 //==============================================================================
@@ -491,6 +522,7 @@ void JSph::LoadConfig(const JSphCfgRun *cfg){
   RunName=(cfg->RunName.length()? cfg->RunName: CaseName);
   FileXml=DirCase+CaseName+".xml";
   PartBeginDir=cfg->PartBeginDir; PartBegin=cfg->PartBegin; PartBeginFirst=cfg->PartBeginFirst;
+  RestartBeginDir=cfg->RestartBeginDir; RestartBegin=cfg->RestartBegin;
   //-Output options:
   CsvSepComa=cfg->CsvSepComa;
   SvData=byte(SDAT_None); 
@@ -525,6 +557,11 @@ void JSph::LoadConfig(const JSphCfgRun *cfg){
     Log->Print(fun::VarStr("PartBeginFirst",PartBeginFirst));
   }
 
+  if(RestartBegin){
+    Log->Print(fun::VarStr("RestartBegin",RestartBegin));
+    Log->Print(fun::VarStr("RestartBeginDir",RestartBeginDir));
+    Log->Print(fun::VarStr("PartBeginFirst",PartBeginFirst));
+  }
   //-Loads case configuration from XML and command line.
   LoadCaseConfig(cfg);
 
@@ -835,7 +872,6 @@ void JSph::LoadConfigCommands(const JSphCfgRun *cfg){
   else OutputTime->Config(FileXml,"case.execution.special.timeout",TimePart);
 
   //-Configuration of domain limits.
-  CellDomFixed=cfg->CellDomFixed;
   CellMode=cfg->CellMode;
   if(cfg->DomainMode==2)ConfigDomainFixed(cfg->DomainFixedMin,cfg->DomainFixedMax);
 
@@ -907,8 +943,6 @@ void JSph::LoadConfigVarsExec(){
 void JSph::LoadCaseConfig(const JSphCfgRun *cfg){
   if(!fun::FileExists(FileXml))Run_ExceptioonFile("Case configuration was not found.",FileXml);
   JXml xml; xml.LoadFile(FileXml);
-  //-Shows pre-processing application generating the XML file.
-  Log->Printf("XML-App: %s",xml.GetAttributeStr(xml.GetNodeError("case")->ToElement(),"app",true,"unknown").c_str());
 
   //-Loads kernel selection to compute kernel values.
   LoadKernelSelection(cfg,&xml);
@@ -1119,6 +1153,39 @@ void JSph::LoadCaseConfig(const JSphCfgRun *cfg){
       }
     }
   }
+  
+  //==============================================================================
+  // Configuration of EBG parameters for ONE structure
+  //==============================================================================
+  TiXmlNode* ebgNode = xml.GetNode("case.execution.special.ebg",false);
+  if(ebgNode) {
+    UseEBG=true;
+    MkEBG=xml.ReadElementInt(ebgNode->ToElement(), "fluid","mkfluid");
+    TiXmlNode* ebgBoundNode = xml.GetNode("case.execution.special.ebg.fluid",false);
+    EBGBound=xml.ReadElementInt(ebgBoundNode, "EBGBound", "value");
+    if(EBGBound)MkEBGBound=MkEBG;
+    unsigned BlockEBG=MkEBG+parts.CountBlocks(TpPartFixed)+parts.CountBlocks(TpPartMoving);
+    const JCasePartBlock &EBGblock=parts.GetBlock(BlockEBG);
+    MkBoundBegin=EBGblock.GetBegin();
+    MkBoundCount=EBGblock.GetCount();
+    
+    NpEBG+=MkBoundCount;
+
+    MkEBGFluid= xml.ReadElementFloat(ebgBoundNode, "MkEBGFluid", "value");
+    unsigned BlockEBGFluid=MkEBGFluid+parts.CountBlocks(TpPartFixed)+parts.CountBlocks(TpPartMoving);
+    const JCasePartBlock &EBGblockFluid=parts.GetBlock(BlockEBGFluid);
+    IdEBGFluid=EBGblockFluid.GetBegin();
+    NpEBGFluid=EBGblockFluid.GetCount();                                         
+    
+    // Properties
+    EBGCenter=xml.ReadElementDouble3(ebgBoundNode,"center");
+    DensityEBG=xml.ReadElementFloat(ebgBoundNode, "DensityEBG", "value");
+    YoungsModEBG=xml.ReadElementFloat(ebgBoundNode, "YoungsModEBG", "value");
+    CrossAreaEBG=xml.ReadElementFloat(ebgBoundNode, "CrossAreaEBG", "value");
+    BendingRigidityEBG= xml.ReadElementFloat(ebgBoundNode, "BendingRigidityEBG", "value");
+    InComEBGConst= xml.ReadElementFloat(ebgBoundNode, "InComEBGConst", "value");
+  }
+  //==============================================================================
 
   //-Configuration of Inlet/Outlet.
   if(xml.GetNodeSimple("case.execution.special.inout",true)){
@@ -1320,6 +1387,122 @@ void JSph::ConfigBoundNormals(unsigned np,unsigned npb,const tdouble3 *pos
 }
 
 //==============================================================================
+/// To get EBG neighbour list
+//==============================================================================
+void JSph::ConfigNeighbourList(const unsigned np,const unsigned ebgnpbegin,const unsigned ebgnpcount
+  ,const tdouble3 ebgcenter
+  ,const tdouble3 *pos,const unsigned *idp
+  ,tfloat3 *ebgneigh,tfloat3 *ebgrrtheta0, tdouble3 *ebgpos)
+{
+  /*Log->Printf("HERE!");
+  Log->Print(fun::VarStr("EBGCenter",ebgcenter));*/
+  //-Find NeigbourList
+  unsigned ebgcount=ebgnpbegin;
+  for(unsigned p=0;p<np;p++)if(idp[p]>=ebgnpbegin && idp[p]<(ebgnpbegin+ebgnpcount)){
+    ebgneigh[ebgcount].x=idp[p];
+    ebgpos[ebgcount-ebgnpbegin].x=idp[p];
+    ebgpos[ebgcount-ebgnpbegin].y=pos[p].x;
+    ebgpos[ebgcount-ebgnpbegin].z=pos[p].z;
+//    ebgpos[ebgcount-ebgnpbegin].w=pos[p].z;
+    double diffmin=DBL_MAX;
+    double diffminp2=DBL_MAX;
+    for(unsigned p1=0;p1<np;p1++){
+      if(idp[p1]!=ebgneigh[ebgcount].x && (idp[p1]>=ebgnpbegin && idp[p1]<(ebgnpbegin+ebgnpcount))){
+        double diffp1p=pow((pos[p1].x-pos[p].x),2)+pow((pos[p1].y-pos[p].y),2)+pow((pos[p1].z-pos[p].z),2);
+        if(diffp1p<diffmin){
+          diffmin=diffp1p;
+          ebgneigh[ebgcount].y=idp[p1];
+          ebgrrtheta0[ebgcount].x=sqrt(diffp1p);
+        }
+      }
+    }
+    for(unsigned p2=0;p2<np;p2++){
+      if((idp[p2]!=ebgneigh[ebgcount].x && idp[p2]!=ebgneigh[ebgcount].y) && (idp[p2]>=ebgnpbegin && idp[p2]<(ebgnpbegin+ebgnpcount))){
+        double diffp2p=pow((pos[p2].x-pos[p].x),2)+pow((pos[p2].y-pos[p].y),2)+pow((pos[p2].z-pos[p].z),2);
+        if(diffp2p<diffminp2){
+          diffminp2=diffp2p;
+          ebgneigh[ebgcount].z=idp[p2];
+          ebgrrtheta0[ebgcount].y=sqrt(diffp2p);
+        }
+      }
+    }
+    ebgcount++;
+  }
+ 
+  // Ensure neighbour 1 is clockwise from ref. particle && neighbour 2 is anticlockwise from ref. particle
+  for(unsigned c=ebgnpbegin;c<ebgcount;c++){
+    tdouble3 posref; tdouble3 posn1; tdouble3 posn2;
+    unsigned ppref;
+    for(unsigned pref=0;pref<np;pref++)if(idp[pref]==ebgneigh[c].x){
+      posref=pos[pref]-ebgcenter;
+      ppref=pref;
+    }
+    for(unsigned pn1=0;pn1<np;pn1++)if(idp[pn1]==ebgneigh[idp[ppref]].y){
+      posn1=pos[pn1]-ebgcenter;
+    }
+    for(unsigned pn2=0;pn2<np;pn2++)if(idp[pn2]==ebgneigh[idp[ppref]].z){
+      posn2=pos[pn2]-ebgcenter;
+    }
+    if(posref.x>0){
+      /*if(posref.z>=0)if(posn1.z>posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posref.z<0)if(posn1.z>posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}*/
+      if(posn1.z>posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posn1.z==posn2.z && posn1.z>0)if(posn1.x<posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posn1.z==posn2.z && posn1.z<0)if(posn1.x>posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+    }
+    else if(posref.x<0){
+      /*if(posref.z>=0)if(posn1.z<posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posref.z<0)if(posn1.z<posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}*/
+      if(posn1.z<posn2.z){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posn1.z==posn2.z && posn1.z>0)if(posn1.x<posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posn1.z==posn2.z && posn1.z<0)if(posn1.x>posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+    }
+    else if(posref.x==0){
+      if(posref.z<0)if(posn1.x>posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+      if(posref.z>0)if(posn1.x<posn2.x){swap(ebgneigh[idp[ppref]].y,ebgneigh[idp[ppref]].z);}
+    }
+  }  
+
+  // Sort EBG particles in anticlockwise direction
+  unsigned idref=ebgnpbegin;
+  for(unsigned c=0;c<ebgnpcount;c++){
+    for(unsigned pp=0;pp<ebgnpcount;pp++){
+      if(ebgpos[pp].x==idref){swap(ebgpos[pp],ebgpos[c]);}
+    }
+    idref=ebgneigh[idref].z;
+  }
+
+  // Determine distance betweeen neighbouring points w.r.t and angle at ref. point
+  for(unsigned c=ebgnpbegin;c<ebgcount;c++){
+    tdouble3 pospp; tdouble3 posp1; tdouble3 posp2;
+    unsigned ppref1;
+    for(unsigned pp=0;pp<np;pp++)if(idp[pp]==ebgneigh[c].x){
+      pospp=pos[pp];
+      ppref1=pp;
+    }
+    for(unsigned p1=0;p1<np;p1++)if(idp[p1]==ebgneigh[idp[ppref1]].y){
+      posp1=pos[p1];
+    }
+    for(unsigned p2=0;p2<np;p2++)if(idp[p2]==ebgneigh[idp[ppref1]].z){
+      posp2=pos[p2];
+    }
+    
+    ebgrrtheta0[c]=fmath::AngleBetween2Lines(pospp,posp1,posp2);
+  }
+  
+/*  for(unsigned p=ebgnpbegin;p<ebgcount;p++){
+    //Log->Printf("p = %d", p);
+    Log->Printf("%d, %d, %d",(int)ebgneigh[p].x,(int)ebgneigh[p].y,(int)ebgneigh[p].z);
+    Log->Printf("%18.12e %18.12e %18.12e",ebgrrtheta0[p].x,ebgrrtheta0[p].y,ebgrrtheta0[p].z);    
+  }*/
+  /*for(unsigned p=0;p<ebgnpcount;p++){
+    Log->Printf("%d, %f, %f",(int)ebgpos[p].x,ebgpos[p].y,ebgpos[p].z);
+  }*/
+  
+}
+  
+
+//==============================================================================
 /// Sets DBL_MAX values by indicated values.
 //==============================================================================
 void JSph::PrepareCfgDomainValues(tdouble3 &v,tdouble3 vdef)const{
@@ -1504,7 +1687,7 @@ void JSph::VisuConfig(){
     //Log->Print(fun::VarStr("DensityDiffusionArray",DDTArray));
     ConfigInfo=ConfigInfo+fun::PrintStr("(%g)",DDTValue);
   }
-  if(TDensity==DDT_DDT2Full && KernelH/Dp>1.5)Log->PrintWarning("It is advised that selected DDT: \'Fourtakas et al 2019 (full)\' is used with several boundary layers of particles when h/dp>1.5 (2h <= layers*Dp)");
+  if(TDensity==DDT_DDT2Full && KernelH/Dp>1.5)Log->PrintWarning("It is advised that selected DDT \'(Fourtakas et al 2019 (full)\' is used with several boundary layers of particles when h/dp>1.5 (2h <= layers*Dp)");
   //-Shifting.
   if(Shifting){
     Shifting->VisuConfig();
@@ -1581,6 +1764,38 @@ void JSph::VisuConfig(){
   Log->Print(fun::VarStr("WrnPartsOut",WrnPartsOut));
   //-Other configurations. 
   if(CteB==0)Run_Exceptioon("Constant \'b\' cannot be zero.\n\'b\' is zero when fluid height is zero (or fluid particles were not created)");
+  
+  //==============================================================================
+  // EBG: Log configuration variables
+  //==============================================================================
+  Log->Print(fun::VarStr("MkBoundFirst", MkInfo->GetMkBoundFirst()));
+  Log->Print(fun::VarStr("MkFluidFirst", MkInfo->GetMkFluidFirst()));
+  Log->Print(fun::VarStr("UseEBG", UseEBG));
+  if(UseEBG) {
+    Log->Printf("\nEBG is in used (only ONE body is allowed).");
+    Log->Printf("EBG Boundary Particle Information:");
+//    Log->Print(fun::VarStr("  MkEBG.............",MkEBG));
+    Log->Print(fun::VarStr("  MkEBGBound........",MkEBGBound));
+    Log->Print(fun::VarStr("  MkBoundBegin......",MkBoundBegin));
+    Log->Print(fun::VarStr("  MkBoundCount......",MkBoundCount));
+//    Log->Print(fun::VarStr("  NpEBG.............",NpEBG));
+//    Log->Print(fun::VarStr("  EBGCenter.........",EBGCenter));
+
+    Log->Printf("EBG Particle Properties Information:");
+    Log->Print(fun::VarStr("  MkEBGFluid........",MkEBGFluid));
+    Log->Print(fun::VarStr("  IdEBGFluid........",IdEBGFluid));
+    Log->Print(fun::VarStr("  NpEBGFluid........",NpEBGFluid));
+
+    Log->Printf("EBG Particle Properties Information:");
+    Log->Print(fun::VarStr("  DensityEBG........",DensityEBG));
+    Log->Print(fun::VarStr("  YoungsModEBG......",YoungsModEBG));
+    Log->Print(fun::VarStr("  CrossAreaEBG......",CrossAreaEBG));
+    Log->Print(fun::VarStr("  BendingRigidityEBG",BendingRigidityEBG));
+    Log->Print(fun::VarStr("  InComEBGConst.....",InComEBGConst));
+    Log->Printf("\n");
+  }
+  //==============================================================================
+  
 }
 
 //==============================================================================
@@ -1687,7 +1902,6 @@ void JSph::ConfigCellDivision(){
   Log->Print(fun::VarStr("CellMode",string(GetNameCellMode(CellMode))));
   Log->Print(fun::VarStr("ScellDiv",ScellDiv));
   Log->Print(string("MapCells=(")+fun::Uint3Str(Map_Cells)+")");
-  Log->Print(fun::VarStr("CellDomFixed",CellDomFixed));
   //-Creates VTK file with map cells.
   if(SaveMapCellsVtkSize()<1024*1024*10)SaveMapCellsVtk(Scell);
   else Log->PrintWarning("File CfgInit_MapCells.vtk was not created because number of cells is too high.");
@@ -2019,6 +2233,54 @@ void JSph::LoadCaseParticles(){
 }
 
 //==============================================================================
+/// Load particles of case and process.
+/// Carga particulas del caso a procesar.
+//==============================================================================
+void JSph::LoadRestartParticles(){
+  Log->Print("Loading restart state of particles...");
+  PartsLoaded=new JPartsLoad4(Cpu);
+  PartsLoaded->LoadParticles(DirCase,CaseName,RestartBegin,RestartBeginDir);
+
+  Log->Printf("Loaded particles: %u",PartsLoaded->GetCount());
+  
+  //-Checks if the initial density of fluid particles is out of limits.
+  //-Comprueba si la densidad inicial de las particulas fluido esta fuera de los limites.
+  CheckRhopLimits();
+
+  //-Collect information of loaded particles.
+  //-Recupera informacion de las particulas cargadas.
+  CasePosMin=PartsLoaded->GetCasePosMin();
+  CasePosMax=PartsLoaded->GetCasePosMax();
+
+  //-Computes actual limits of simulation.
+  //-Calcula limites reales de la simulacion.
+  if(PartsLoaded->MapSizeLoaded())PartsLoaded->GetMapSize(MapRealPosMin,MapRealPosMax);
+  else{
+    PartsLoaded->CalculeLimits(double(KernelH)*BORDER_MAP,Dp/2.,PeriX,PeriY,PeriZ,MapRealPosMin,MapRealPosMax);
+    ResizeMapLimits();
+  }
+  Log->Print(string("MapRealPos(final)=")+fun::Double3gRangeStr(MapRealPosMin,MapRealPosMax));
+  MapRealSize=MapRealPosMax-MapRealPosMin;
+  Log->Print("**Initial state of particles is loaded");
+
+  //-Configure limits of periodic axes. 
+  //-Configura limites de ejes periodicos.
+  if(PeriX)PeriXinc.x=-MapRealSize.x;
+  if(PeriY)PeriYinc.y=-MapRealSize.y;
+  if(PeriZ)PeriZinc.z=-MapRealSize.z;
+  //-Computes simulation limits with periodic boundaries.
+  //-Calcula limites de simulacion con bordes periodicos.
+  Map_PosMin=MapRealPosMin; Map_PosMax=MapRealPosMax;
+  if(PeriX){ Map_PosMin.x=Map_PosMin.x-KernelSize;  Map_PosMax.x=Map_PosMax.x+KernelSize; }
+  if(PeriY){ Map_PosMin.y=Map_PosMin.y-KernelSize;  Map_PosMax.y=Map_PosMax.y+KernelSize; }
+  if(PeriZ){ Map_PosMin.z=Map_PosMin.z-KernelSize;  Map_PosMax.z=Map_PosMax.z+KernelSize; }
+  Map_Size=Map_PosMax-Map_PosMin;
+  
+  //-Saves initial domain in a VTK file (CasePosMin/Max, MapRealPosMin/Max and Map_PosMin/Max).
+  SaveInitialDomainVtk();
+}
+
+//==============================================================================
 /// Initialisation of variables and objects for execution.
 /// Inicializa variables y objetos para la ejecucion.
 //==============================================================================
@@ -2149,11 +2411,7 @@ void JSph::InitRun(unsigned np,const unsigned *idp,const tdouble3 *pos){
   if(GaugeSystem->GetCount())GaugeSystem->VisuConfig("GaugeSystem configuration:"," ");
 
   //-Shows configuration of JDsOutputTime.
-  if(OutputTime->UseSpecialConfig()){
-    vector<string> lines;
-    OutputTime->GetConfig("TimeOut configuration:"," ",lines);
-    Log->Print(lines);
-  }
+  if(OutputTime->UseSpecialConfig())OutputTime->VisuConfig("TimeOut configuration:"," ");
 
   Part=PartIni; Nstep=0; PartNstep=0; PartOut=0;
   TimeStep=TimeStepIni; TimeStepM1=TimeStep;
@@ -2161,6 +2419,157 @@ void JSph::InitRun(unsigned np,const unsigned *idp,const tdouble3 *pos){
   TimePartNext=(SvAllSteps? TimeStep: OutputTime->GetNextTime(TimeStep));
 }
 
+//==============================================================================
+/// Initialisation of variables and objects for execution.
+/// Inicializa variables y objetos para la ejecucion.
+//==============================================================================
+void JSph::RestartRun(unsigned np,const unsigned *idp,const tdouble3 *pos){
+  InterStep=(TStep==STEP_Symplectic? INTERSTEP_SymPredictor: INTERSTEP_Verlet);
+  VerletStep=0;
+  if(TStep==STEP_Symplectic)SymplecticDtPre=DtIni;
+  if(UseDEM)DemDtForce=DtIni; //(DEM)
+  
+  //-Loads data from other simulation to restart it.
+  if(RestartBegin){
+    PartBeginTimeStep=PartsLoaded->GetPartBeginTimeStep();
+    PartBeginTotalNp=PartsLoaded->GetPartBeginTotalNp();
+    if(TStep==STEP_Symplectic && PartsLoaded->GetSymplecticDtPre())SymplecticDtPre=PartsLoaded->GetSymplecticDtPre();
+    if(UseDEM  && PartsLoaded->GetDemDtForce())DemDtForce=PartsLoaded->GetDemDtForce(); //(DEM)
+  }
+  //-Free memory of PartsLoaded.
+  delete PartsLoaded; PartsLoaded=NULL;
+
+  //-Adjust paramaters to start.
+  PartIni=PartBeginFirst;
+  TimeStepIni=(!PartIni? 0: PartBeginTimeStep);
+
+/*  //-Adjust motion for the instant of the loaded PART.
+  if(DsMotion){
+    DsMotion->SetTimeMod(!PartIni? PartBeginTimeStep: 0);
+    DsMotion->ProcesTime(JDsMotion::MOMT_Simple,0,TimeStepIni);
+  }
+  //-Adjust motion paddles for the instant of the loaded PART.
+  if(WaveGen)WaveGen->SetTimeMod(!PartIni? PartBeginTimeStep: 0);
+  //-Adjust Multi-layer pistons for the instant of the loaded PART.
+  if(MLPistons)MLPistons->SetTimeMod(!PartIni? PartBeginTimeStep: 0);
+*/
+
+  //-Uses Inlet information from PART read.
+  if(PartBeginTimeStep && PartBeginTotalNp){
+    TotalNp=PartBeginTotalNp;
+    IdMax=unsigned(TotalNp-1);
+  }
+
+/*
+  //-Shows Initialize configuration.
+  if(InitializeInfo.size()){
+    Log->Print("Initialization configuration:");
+    Log->Print(InitializeInfo);
+    Log->Print(" ");
+  }
+
+  //-Process Special configurations in XML.
+  JXml xml; xml.LoadFile(FileXml);
+  xml.SetNuxLib(NuxLib); //-Enables the use of NuxLib in XML configuration.
+
+  //-Configuration of GaugeSystem.
+  GaugeSystem->Config(CSP,Symmetry,TimeMax,TimePart,DomPosMin,DomPosMax,Scell,ScellDiv);
+  if(xml.GetNodeSimple("case.execution.special.gauges",true))
+    GaugeSystem->LoadXml(&xml,"case.execution.special.gauges",MkInfo);
+
+  //-Prepares WaveGen configuration.
+  if(WaveGen){
+    Log->Print("Wave paddles configuration:");
+    WaveGen->Init(GaugeSystem,MkInfo,TimeMax,TimePart);
+    WaveGen->VisuConfig(""," ");
+  }
+
+  //-Prepares MLPistons configuration.
+  if(MLPistons){
+    Log->Printf("Multi-Layer Pistons configuration:");
+    MLPistons->VisuConfig(""," ");
+  }
+
+  //-Prepares RelaxZones configuration.
+  if(RelaxZones){
+    Log->Print("Relaxation Zones configuration:");
+    RelaxZones->Init(DirCase,TimeMax,Dp);
+    RelaxZones->VisuConfig(""," ");
+  }
+
+  //-Prepares ChronoObjects configuration.
+  if(ChronoObjects){
+    Log->Print("Chrono Objects configuration:");
+    if(PartBegin)Run_Exceptioon("Simulation restart not allowed when Chrono is used.");
+    ChronoObjects->Init(Simulate2D,MkInfo);
+    ChronoObjects->VisuConfig(""," ");
+  }
+
+  //-Prepares Moorings configuration.
+  if(Moorings){
+    Log->Print("Moorings configuration:");
+    if(!PartBegin)Moorings->Config(FtCount,FtObjs,ForcePoints);
+    else Run_Exceptioon("Simulation restart not allowed when moorings are used.");
+    Moorings->VisuConfig(""," ");
+  }
+
+  //-Prepares ForcePoints configuration.
+  if(ForcePoints){
+    Log->Printf("ForcePoints configuration:");
+    ForcePoints->Config(FtCount,FtObjs,PeriActive,PeriX,PeriY,PeriZ,PeriXinc,PeriYinc,PeriZinc);
+    if(!PartBegin)ForcePoints->CheckPoints(MkInfo,np,idp,pos);
+    else Run_Exceptioon("Simulation restart not allowed when FtForces is used.");
+    ForcePoints->VisuConfig(""," ",FtCount,FtObjs);
+  }
+
+  //-Prepares Damping configuration.
+  if(Damping){
+    Damping->VisuConfig("Damping configuration:"," ");
+  }
+
+  //-Prepares AccInput configuration.
+  if(AccInput){
+    Log->Print("AccInput configuration:");
+    AccInput->VisuConfig(""," ");
+    AccInput->Init(MkInfo);
+  }
+
+  //-Configuration of SaveDt.
+  if(xml.GetNodeSimple("case.execution.special.savedt",true)){
+    SaveDt=new JDsSaveDt();
+    SaveDt->Config(&xml,"case.execution.special.savedt",TimeMax,TimePart);
+    SaveDt->VisuConfig("SaveDt configuration:"," ");
+  }
+
+  //-Prepares BoundCorr configuration.
+  if(BoundCorr){
+    Log->Print("BoundCorr configuration:");
+    if(PartBegin)Run_Exceptioon("Simulation restart not allowed when BoundCorr is used.");
+    BoundCorr->RunAutoConfig(PartsInit);
+    BoundCorr->VisuConfig(""," ");
+  }
+
+  //-Shows configuration of JGaugeSystem.
+  if(GaugeSystem->GetCount())GaugeSystem->VisuConfig("GaugeSystem configuration:"," ");
+
+  //-Shows configuration of JDsOutputTime.
+  if(OutputTime->UseSpecialConfig())OutputTime->VisuConfig("TimeOut configuration:"," ");
+*/
+
+  Part=PartIni; Nstep=0; PartNstep=0; PartOut=0;
+  TimeStep=TimeStepIni; TimeStepM1=TimeStep;
+  if(FixedDt)DtIni=FixedDt->GetDt(TimeStep,DtIni);
+  TimePartNext=(SvAllSteps? TimeStep: OutputTime->GetNextTime(TimeStep));
+
+  printf("\n\nJSph.cpp\n");
+  printf("RestartBegin=%u\n",RestartBegin);
+  printf("PartBeginTimeStep=%f, PartBeginTotalNp=%u \n",PartBeginTimeStep,PartBeginTotalNp);
+  printf("PartIni=%u, TimeStepIni=%f \n", PartIni, TimeStepIni);
+  printf("TotalNp=%u, IdMax=%u \n", TotalNp, IdMax);
+  printf("Part=%u, TimeStep=%f \n\n", Part, TimeStep);
+
+
+}
 //==============================================================================
 /// Calculates predefined movement of boundary particles.
 /// Calcula movimiento predefinido de boundary particles.
@@ -2189,12 +2598,8 @@ void JSph::CalcMotionWaveGen(double stepdt){
   if(WaveGen){
     const bool svdata=(TimeStep+stepdt>=TimePartNext);
     for(unsigned c=0;c<WaveGen->GetCount();c++){
-      const StMotionData m=(motsim? WaveGen->GetMotion(svdata,c,TimeStep,stepdt): WaveGen->GetMotionAce(svdata,c,TimeStep,stepdt));
-      //Log->Printf("%u> t:%f  tp:%d  mx:%f  SetMotionData-WaveGen",Nstep,TimeStep,m.type,m.linmov.x);
-      if(m.type!=MOTT_None){
-        if(motsim)DsMotion->SetMotionData   (m);
-        else      DsMotion->SetMotionDataAce(m);
-      }
+      if(motsim)DsMotion->SetMotionData   (WaveGen->GetMotion   (svdata,c,TimeStep,stepdt));
+      else      DsMotion->SetMotionDataAce(WaveGen->GetMotionAce(svdata,c,TimeStep,stepdt));
     }
   }
 }
@@ -3008,6 +3413,7 @@ void JSph::DgSaveVtkParticlesCpu(std::string filename,int numfile,unsigned pini,
   if(xvel) arrays.AddArray("Vel" ,np,xvel ,true);
   if(xrhop)arrays.AddArray("Rhop",np,xrhop,true);
   if(xace) arrays.AddArray("Ace" ,np,xace ,true);
+
   JVtkLib::SaveVtkData(filename,arrays,"Pos");
   arrays.Reset();
 }

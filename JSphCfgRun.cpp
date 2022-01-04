@@ -43,7 +43,6 @@ void JSphCfgRun::Reset(){
   SvPosDouble=-1;
   OmpThreads=0;
   SvTimers=true;
-  CellDomFixed=false;
   CellMode=CELLMODE_Full;
   TBoundary=0; SlipMode=0; MdbcFastSingle=-1; MdbcThreshold=-1;
   DomainMode=0;
@@ -59,6 +58,7 @@ void JSphCfgRun::Reset(){
   Sv_Vtk=false; Sv_Csv=false;
   CaseName=""; RunName=""; DirOut=""; DirDataOut=""; 
   PartBegin=0; PartBeginFirst=0; PartBeginDir="";
+  RestartBegin=0; RestartBeginDir="";
   TimeMax=-1; TimePart=-1;
   RhopOutModif=false; RhopOutMin=700; RhopOutMax=1300;
   FtPause=-1;
@@ -100,7 +100,6 @@ void JSphCfgRun::VisuInfo()const{
   printf("    -cellmode:<mode>  Specifies the cell division mode\n");
   printf("        full      Lowest and the least expensive in memory (by default)\n");
   printf("        half      Fastest and the most expensive in memory\n");
-  printf("    -cellfixed:<0/1>  Cell domain is fixed according maximum domain size\n");
   printf("\n");
 
   printf("  Formulation options:\n");
@@ -281,7 +280,6 @@ void JSphCfgRun::LoadOpts(string *optlis,int optn,int lv,const std::string &file
         else ok=false;
         if(!ok)ErrorParm(opt,c,lv,file);
       }
-      else if(txword=="CELLFIXED")CellDomFixed=(txoptfull!=""? atoi(txoptfull.c_str()): 1)!=0;
       else if(txword=="DBC")          { TBoundary=1; SlipMode=0; }
       else if(txword=="MDBC")         { TBoundary=2; SlipMode=1; }
       else if(txword=="MDBC_NOSLIP")  { TBoundary=2; SlipMode=2; }
@@ -357,6 +355,16 @@ void JSphCfgRun::LoadOpts(string *optlis,int optn,int lv,const std::string &file
           PartBeginFirst=(txopt2.empty()? PartBegin: unsigned(v2));
         }
         PartBeginDir=optlis[c+1]; c++; 
+      }
+      else if(txword=="RESTARTBEGIN"&&c+1<optn){ 
+        int v1=atoi(txopt1.c_str());
+        int v2=atoi(txopt2.c_str());
+        if(v1<0||v2<0)ErrorParm(opt,c,lv,file);
+        else{
+          RestartBegin=unsigned(v1);
+          PartBeginFirst=(txopt2.empty()? RestartBegin: unsigned(v2));
+        }
+        RestartBeginDir=optlis[c+1]; c++; 
       }
       else if(txword=="RHOPOUT"){ 
         RhopOutMin=float(atof(txopt1.c_str())); 
