@@ -1182,10 +1182,10 @@ void JSphCpu::InteractionForcesEBG(unsigned n,unsigned pinit,StDivDataCpu divdat
     //-Moment for each EBG particles, with ppref as the center
     const float mom=BendingRigidityEBG*(ebgrrtheta[idp[ppref]].z-ebgrrtheta0[idp[ppref]].z)/(ebgrrtheta[idp[ppref]].x+ebgrrtheta[idp[ppref]].y);
 
-    ebgforces[idp[ppref]].x=mom/(ebgrrtheta[idp[ppref]].x)*drz1;    //(Moment) Force.x acting on ppref from Neighbour1
-    ebgforces[idp[ppref]].y=mom/(ebgrrtheta[idp[ppref]].x)*(-drx1); //(Moment) Force.z acting on ppref from Neighbour1
-    ebgforces[idp[ppref]].z=mom/(ebgrrtheta[idp[ppref]].y)*(-drz2); //(Moment) Force.x acting on ppref from Neighbour2
-    ebgforces[idp[ppref]].w=mom/(ebgrrtheta[idp[ppref]].y)*drx2;    //(Moment) Force.z acting on ppref from Neighbour2
+    ebgforces[idp[ppref]].x=mom/(ebgrrtheta[idp[ppref]].x)/(ebgrrtheta[idp[ppref]].x)*drz1;    //(Moment) Force.x acting on ppref from Neighbour1
+    ebgforces[idp[ppref]].y=mom/(ebgrrtheta[idp[ppref]].x)/(ebgrrtheta[idp[ppref]].x)*(-drx1); //(Moment) Force.z acting on ppref from Neighbour1
+    ebgforces[idp[ppref]].z=mom/(ebgrrtheta[idp[ppref]].y)/(ebgrrtheta[idp[ppref]].y)*(-drz2); //(Moment) Force.x acting on ppref from Neighbour2
+    ebgforces[idp[ppref]].w=mom/(ebgrrtheta[idp[ppref]].y)/(ebgrrtheta[idp[ppref]].y)*drx2;    //(Moment) Force.z acting on ppref from Neighbour2
 
     //-Incompressibility penalty forces at ref. particle based on over change in area
     const float incompE=0.5*InComEBGConst*(AreaEBG-Area0EBG)/Area0EBG;
